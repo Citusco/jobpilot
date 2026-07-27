@@ -55,24 +55,22 @@ You **MUST** consider the user input before proceeding (if not empty).
     After emitting the block above you MUST actually invoke the hook and wait for it to finish before continuing. Run it the same way you would run the command yourself in this agent/session (the invocation may differ from the literal `{command}` id shown above, e.g. a skills-mode agent runs it as `/skill:speckit-...` or `$speckit-...`). Emitting the block alone does not run the hook.
 - If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently
 
-## Jira Ticket Requirement
+## Feature-Level Jira Sync
 
-**Implementation MUST be driven by a Jira ticket, not by `tasks.md` in isolation.** This project tracks tasks in the `SCRUM` project on the `nathannan` Atlassian site (issue hierarchy: Epic → Story → Subtask, one Subtask per `tasks.md` task, titled `T0xx: <description>`).
+**One feature = one Jira Story. `tasks.md` (T001, T002, ...) is an internal implementation checklist only — it is never mapped to Jira subtasks, and Jira is never touched per task.**
 
-- Before implementing anything, identify which Jira ticket (issue key, e.g. `SCRUM-23`) the work corresponds to. If the user specified a ticket key or a task ID when invoking this command, use that. Otherwise, **ask the user which Jira ticket(s) to implement** — do not pick a task out of `tasks.md` on your own initiative.
-- Fetch the ticket via the Atlassian MCP tools (`getJiraIssue`) to read its current summary, description, and status. Match the ticket's Task ID (from its `T0xx:` summary prefix) to the corresponding checklist line in `tasks.md` to confirm they refer to the same unit of work.
-- **If the ticket's summary/description alone isn't enough to implement correctly** (missing file path, unclear acceptance criteria, ambiguous dependency), fall back to that feature's design docs under `specs/<feature>/`: start with the matching line in `tasks.md` (exact file path, `[P]`/dependency notes), then `plan.md` (architecture, tech stack, project structure), and — if still unclear — `data-model.md`, `research.md`, `contracts/`, and `quickstart.md` as relevant. The ticket is the entry point; the spec docs are the source of truth for detail, not the other way around.
-- Do not implement a task with no corresponding Jira ticket. If `tasks.md` contains tasks that have no matching ticket (e.g. added after the last Jira import), surface this to the user before implementing rather than silently doing untracked work.
-- When a task is completed, mark it `[X]` in `tasks.md` (per step 8 below) **and** transition its Jira ticket to the appropriate status via the Atlassian MCP tools, so the board doesn't go stale.
+- Before implementing anything, identify the single Jira Story this feature maps to (created by `/speckit-specify`, issue key e.g. `SCRUM-23`). If the user specified it, use that; otherwise look it up (e.g. by feature name) via the Atlassian MCP tools. If none exists, ask the user before proceeding rather than inventing one.
+- If the Story isn't already "In Progress", transition it now — this is the *only* Jira write that happens before the feature is complete.
+- Use `tasks.md` (and `plan.md`/`data-model.md`/`research.md`/`contracts/`/`quickstart.md` when present) as the source of implementation detail — exact file paths, dependencies, acceptance criteria. The Jira Story's description is feature-level context, not a per-task spec.
+- Do **not** create Jira subtasks, and do **not** transition the Story after each individual task — only mark `tasks.md` checkboxes (step 8 below) as you go. The Story transitions again only once, at feature completion (see Feature Completion below).
 
-## Per-Ticket Branch Requirement
+## Single Feature Branch
 
-**Every ticket's implementation MUST happen on its own branch, never committed directly onto the feature branch.** The feature branch (e.g. `001-jd-training-directions`) holds only spec-kit design artifacts (spec.md, plan.md, tasks.md, research.md, etc.) — implementation commits do not accumulate there.
+**All of this feature's implementation happens on the one feature branch created by `/speckit-specify` (e.g. `001-jd-training-directions`) — never on a per-task or per-ticket branch.**
 
-- Before writing any code for a ticket, create a new branch off the current tip of the feature branch, named `<ticket-key-lowercase>-<short-kebab-slug>` (e.g. `scrum-6-initialize-project-skeleton` for ticket `SCRUM-6`). Confirm you're branching from the feature branch, not from `main`, so the branch has the spec/plan/tasks context.
-- Do all of that ticket's work — code, `tasks.md` checkbox update, commits — on this branch. Do not switch back to the feature branch and commit there.
-- Push the ticket branch to `origin` once the task is complete and validated. Do not merge it back into the feature branch or `main` yourself — leave that PR decision to the user, the same as with any other branch in this project.
-- One branch generally maps to one ticket, but if the user asks to implement several related `[P]` tasks together in one pass, one branch may cover all of them — use judgment, and confirm with the user if it's ambiguous whether tasks should be split across branches or combined.
+- Do not create a new branch per task, per phase, or per `[P]` group. Execute tasks continuously on the feature branch.
+- Commit after each task or logical group (small, reviewable commits), but do not push after every task.
+- Do not open a PR mid-feature. There is exactly one PR for the whole feature, opened once at completion (see Feature Completion below).
 
 ## Outline
 
@@ -169,7 +167,6 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Execution flow**: Order and dependency requirements
 
 6. Execute implementation following the task plan:
-   - **Before starting each task**: apply the ## Jira Ticket Requirement gate above — confirm the task's Jira ticket, and fall back to `plan.md`/spec docs if the ticket alone is unclear
    - **Phase-by-phase execution**: Complete each phase before moving to the next
    - **Respect dependencies**: Run sequential tasks in order, parallel tasks [P] can run together
    - **Follow TDD approach**: Execute test tasks before their corresponding implementation tasks
@@ -198,6 +195,16 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Confirm the implementation follows the technical plan
 
 Note: This command assumes a complete task breakdown exists in tasks.md. If tasks are incomplete or missing, suggest running `/speckit-tasks` first to regenerate the task list.
+
+## Feature Completion: Push, PR, Jira Sync
+
+Once all tasks in `tasks.md` are complete (or the user explicitly asks to stop and ship what's done so far), do this exactly once for the whole feature — not per task:
+
+1. Run typecheck + lint + test; fix failures before proceeding (Constitution V / CLAUDE.md Definition of Done).
+2. Push the feature branch to `origin`.
+3. Open the single PR for this feature (draft or ready, per the user's usual preference) from the feature branch. Do not merge it yourself.
+4. Transition the feature's Jira Story to reflect completion (e.g. In Review once the PR is open) via the Atlassian MCP tools. This is the second and last Jira write for this feature — do not transition per task.
+5. Run the `ticket-wrapup` skill before suggesting the Story be marked Done — this runs once per feature, not once per task.
 
 ## Mandatory Post-Execution Hooks
 
@@ -242,5 +249,8 @@ Report final status with summary of completed work.
 
 - [ ] All tasks in tasks.md completed and marked `[X]`
 - [ ] Implementation validated against specification, plan, and test coverage
+- [ ] Typecheck + lint + test all pass
+- [ ] Feature branch pushed once and a single PR opened (not per task)
+- [ ] The feature's one Jira Story transitioned once, at completion (not per task)
 - [ ] Extension hooks dispatched or skipped according to the rules in Mandatory Post-Execution Hooks above
 - [ ] Completion reported to user with summary of completed work

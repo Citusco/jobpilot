@@ -14,9 +14,20 @@
 - **[Story]**: Maps the task to US1 (only used in Phase 3; Setup/Foundational/Polish carry no story label)
 - Every description includes the exact file path to touch
 
-## Jira Scrum Mapping
+## Jira Scrum Mapping (historical — superseded)
 
-This tasks.md is written to convert directly into Jira Scrum tickets in the `SCRUM` project (site `nathannan`, issue types available: Epic / Story / Task / Subtask) via the Atlassian MCP tool in a follow-up step. The mapping:
+> **Note**: This section and the per-task mapping table below reflect the
+> workflow in effect when T001–T006 were implemented (each task got its own
+> Jira Subtask, branch, and PR). That model has been replaced: as of this
+> amendment, one feature maps to exactly one Jira Story, tracked at
+> `specs/001-jd-training-directions`, and `/speckit-implement` runs T007
+> onward continuously on the feature branch with a single PR and no
+> per-task Jira writes (see CLAUDE.md Workflow / constitution.md
+> Development Workflow). SCRUM-6 through SCRUM-11 already exist and are not
+> being undone; this note exists so future work on this file doesn't
+> mistakenly recreate per-task subtasks for T007+.
+
+This tasks.md was originally written to convert directly into Jira Scrum tickets in the `SCRUM` project (site `nathannan`, issue types available: Epic / Story / Task / Subtask) via the Atlassian MCP tool in a follow-up step. The mapping (historical record only):
 
 | Spec Kit concept | Jira issue type | Notes |
 |---|---|---|

@@ -19,6 +19,15 @@ $ARGUMENTS
 
 You **MUST** consider the user input before proceeding (if not empty).
 
+## Jira Story Sync (Feature Start)
+
+**One feature = one Jira Story.** This command is where that Story is created — it is the first of exactly two Jira writes for this feature (the second happens once, at `/speckit-implement` completion).
+
+- After generating the feature's short name (step 1 in the Outline below), create one Jira Story in the project this repo tracks work in (see CLAUDE.md / prior conversation context for the project key if not obvious), summary = the feature's short name or a short human-readable title, and transition it to "In Progress".
+- If a matching Story already exists for this feature (e.g. the user is re-running `/speckit-specify` on an in-progress feature), reuse it — do not create a duplicate.
+- Do not create any Jira Subtasks for this feature's future tasks.md items — those stay internal (see CLAUDE.md Workflow).
+- If Jira access isn't available or the user says to skip it, proceed without blocking spec creation, but note in the Completion Report that Jira sync was skipped.
+
 ## Pre-Execution Checks
 
 **Check for extension hooks (before specification)**:
