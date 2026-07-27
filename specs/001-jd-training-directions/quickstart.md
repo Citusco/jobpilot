@@ -1,81 +1,92 @@
-# Quickstart: JD 结构化提取与候选训练方向推荐
+# Quickstart: JD Structured Extraction and Candidate Training Direction Recommendation
 
-## 前置条件
+## Prerequisites
 
-- Node.js 20 LTS,已 `npm install`(引入 Fastify / `@langchain/langgraph` / `openai`
-  / `zod` / `drizzle-orm` + `drizzle-kit` / `jest` + `ts-jest`,均已在 plan.md
-  「Complexity Tracking」中确认)
-- 本地或可达的 PostgreSQL 实例,已启用 `pgvector` 扩展(即便本 feature 不用 vector
-  列,扩展需已存在以匹配项目统一的数据库配置)
-- 环境变量:
-  - `OPENAI_API_KEY`:直连 OpenAI SDK 用(Constitution IV,当前阶段不经网关)
-  - `DATABASE_URL`:指向上述 Postgres 实例,同时供 `drizzle.config.ts` 读取
+- Node.js 20 LTS, with `npm install` already run (pulling in Fastify /
+  `@langchain/langgraph` / `openai` / `zod` / `drizzle-orm` + `drizzle-kit` / `jest` +
+  `ts-jest`, all confirmed in plan.md's "Complexity Tracking")
+- A local or reachable PostgreSQL instance, with the `pgvector` extension enabled (even
+  though this feature doesn't use vector columns, the extension needs to already exist
+  to match the project's unified database configuration)
+- Environment variables:
+  - `OPENAI_API_KEY`: for connecting directly to the OpenAI SDK (Constitution IV, no
+    gateway at the current stage)
+  - `DATABASE_URL`: points to the Postgres instance above, and is also read by
+    `drizzle.config.ts`
 
-## 启动步骤
+## Startup Steps
 
 ```bash
 npm install
-npm run db:generate  # drizzle-kit generate:据 src/db/schema.ts 生成 migration
-npm run db:migrate   # drizzle-kit migrate:对 DATABASE_URL 执行 migration
-npm run dev          # 启动 Fastify 开发服务器
+npm run db:generate  # drizzle-kit generate: generates a migration from src/db/schema.ts
+npm run db:migrate   # drizzle-kit migrate: runs the migration against DATABASE_URL
+npm run dev          # start the Fastify dev server
 ```
 
-## 验证场景(对应 spec 的三条 Acceptance Scenarios)
+## Validation Scenarios (corresponding to the spec's three Acceptance Scenarios)
 
-### 场景 1:信息完整的 JD → 返回结构摘要 + 3~6 个方向
+### Scenario 1: A JD with complete information → returns a structured summary + 3-6 directions
 
 ```bash
 curl -X POST http://localhost:3000/jd-submissions \
   -H "Content-Type: application/json" \
-  -d '{"text": "我们招聘一名高级后端工程师,要求精通 Node.js、TypeScript、PostgreSQL,\n熟悉分布式系统设计,有 Kafka 或类似消息队列经验者优先。"}'
+  -d '{"text": "We are hiring a Senior Backend Engineer, proficient in Node.js, TypeScript, and PostgreSQL,\nfamiliar with distributed systems design; experience with Kafka or a similar message queue is a plus."}'
 ```
 
-**期望**:HTTP 201;响应体 `status = "accepted"`;`extraction.role` 含"后端工程师"
-相关表述;`extraction.techStack` 包含 Node.js / TypeScript / PostgreSQL;
-`extraction.seniority` 为"高级"且 `seniorityInferred = false`(原文明示);
-`directions` 长度在 [3, 6] 之间,每项都有非空 `rationale`(且理由中的关键词能在
-请求体的 `text` 里找到)、非空 `tags`、`suggestedQuestionCount > 0`。参见
-[contracts/openapi.yaml](./contracts/openapi.yaml) 的 `JdSubmissionAccepted` schema。
+**Expected**: HTTP 201; response body `status = "accepted"`; `extraction.role` contains
+wording related to "Backend Engineer"; `extraction.techStack` includes Node.js /
+TypeScript / PostgreSQL; `extraction.seniority` is "Senior" with `seniorityInferred =
+false` (explicitly stated in the original text); `directions` has a length between [3,
+6], and each item has a non-empty `rationale` (with keywords from the rationale
+findable in the request body's `text`), non-empty `tags`, and `suggestedQuestionCount >
+0`. See the `JdSubmissionAccepted` schema in
+[contracts/openapi.yaml](./contracts/openapi.yaml).
 
-### 场景 2:理由可追溯性人工核查(对应 SC-002)
+### Scenario 2: Manual check of rationale traceability (corresponds to SC-002)
 
-对场景 1 返回的每个 `directions[i].rationale`,人工确认其中引用/复述的技术点或
-短语确实出现在提交的 JD 原文中,而非模型编造。此项在自动化测试里通过
-`tests/integration/jdSubmissionFlow.test.ts` 用固定 JD 文本 + mock 的 LLM 响应做
-断言(mock 响应本身在测试里手工构造,确保覆盖"理由引用原文"这一形状约束;真实
-LLM 输出质量的抽查是人工 QA 职责,不在自动化测试范围内)。
+For each `directions[i].rationale` returned in Scenario 1, manually confirm that the
+technical points or phrases it quotes/paraphrases genuinely appear in the submitted JD
+original text, rather than being fabricated by the model. In automated tests, this is
+asserted in `tests/integration/jdSubmissionFlow.test.ts` using a fixed JD text + a mocked
+LLM response (the mocked response itself is hand-constructed in the test to ensure
+coverage of the shape constraint "rationale quotes the original text"; spot-checking the
+quality of real LLM output is a manual QA responsibility and is out of scope for
+automated tests).
 
-### 场景 3:技术栈信息极丰富的 JD → 方向数量不超过 6
+### Scenario 3: A JD with an extremely rich tech stack → the direction count does not exceed 6
 
 ```bash
 curl -X POST http://localhost:3000/jd-submissions \
   -H "Content-Type: application/json" \
-  -d '{"text": "<一段涵盖前端/后端/数据/DevOps/算法等多个方向技术栈的长 JD>"}'
+  -d '{"text": "<a long JD covering tech stacks across multiple directions such as frontend/backend/data/DevOps/algorithms>"}'
 ```
 
-**期望**:`directions` 数组长度 ≤ 6,即使 JD 内容可映射出远多于 6 个方向。
+**Expected**: The `directions` array's length ≤ 6, even if the JD content could map to
+far more than 6 directions.
 
-## 边界场景验证
+## Boundary Scenario Validation
 
-- **JD 文本过短/明显非职位描述**:提交 `{"text": "asdkjaskjd"}`,期望 HTTP 422,
-  `status = "rejected"`,`reason` 提示补充完整 JD 内容(FR-011)。
-- **未提及明确职级**:提交不含职级词汇的 JD,期望 `seniorityInferred = true`且
-  `seniority` 仍有一个推断值(FR-010)。
-- **技术栈稀疏、不足以支撑 3 个方向**:提交只提到一两项技术的简短 JD,期望
-  `status = "accepted"` 但 `directions` 长度 < 3(而不是报错,也不是被凑数到 3
-  个,FR-012)。
+- **JD text too short / clearly not a job description**: submit `{"text":
+  "asdkjaskjd"}`, expect HTTP 422, `status = "rejected"`, `reason` prompting for more
+  complete JD content (FR-011).
+- **No explicit seniority mentioned**: submit a JD that contains no seniority wording,
+  expect `seniorityInferred = true` with `seniority` still holding an inferred value
+  (FR-010).
+- **Sparse tech stack, insufficient to support 3 directions**: submit a short JD that
+  mentions only one or two technologies, expect `status = "accepted"` but a `directions`
+  length < 3 (rather than an error, and rather than being padded up to 3, FR-012).
 
-## 单元/集成测试入口
+## Unit/Integration Test Entry Points
 
 ```bash
-npm run test          # 跑 tests/unit + tests/contract + tests/integration(Jest)
+npm run test          # runs tests/unit + tests/contract + tests/integration (Jest)
 npm run typecheck
 npm run lint
 ```
 
-- `tests/unit/graph/*`:每个 LangGraph 节点独立测试,mock `openai` client 与
-  Drizzle client(Constitution II)。
-- `tests/contract/jdSubmissions.contract.test.ts`:用 Fastify `inject()` 校验
-  请求/响应形状与 `contracts/openapi.yaml` 一致。
-- `tests/integration/jdSubmissionFlow.test.ts`:跑通完整状态图(LLM/DB 均 mock),
-  覆盖上面列出的 3 条 Acceptance Scenarios + 3 条边界场景。
+- `tests/unit/graph/*`: each LangGraph node tested independently, mocking the `openai`
+  client and the Drizzle client (Constitution II).
+- `tests/contract/jdSubmissions.contract.test.ts`: uses Fastify's `inject()` to verify
+  the request/response shape matches `contracts/openapi.yaml`.
+- `tests/integration/jdSubmissionFlow.test.ts`: runs the full state graph (LLM/DB both
+  mocked), covering the 3 Acceptance Scenarios and 3 boundary scenarios listed above.

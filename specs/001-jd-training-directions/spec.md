@@ -1,4 +1,4 @@
-# Feature Specification: JD 结构化提取与候选训练方向推荐
+# Feature Specification: JD Structured Extraction and Candidate Training Direction Recommendation
 
 **Feature Branch**: `001-jd-training-directions`
 
@@ -6,109 +6,155 @@
 
 **Status**: Draft
 
-**Input**: User description: "实现 JD 结构化提取功能:输入一段 Job Description 文本,提取角色/技术栈/职级信息,基于此推荐 3~6 个候选训练方向,每个方向带理由(可追溯到 JD 原文)、标签、建议题目数量。这一步先不做任务生成,只到"候选方向推荐"为止。"
+**Input**: User description: "Implement JD structured extraction: given a Job Description text, extract role/tech-stack/seniority information, and based on that recommend 3-6 candidate training directions, each with a rationale (traceable back to the JD text), tags, and a suggested question count. This step does not generate tasks yet — it stops at 'candidate direction recommendation'."
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - 提取 JD 结构信息并生成候选训练方向 (Priority: P1)
+### User Story 1 - Extract JD structural information and generate candidate training directions (Priority: P1)
 
-作为负责为某个职位设计 live coding 训练内容的使用者,我粘贴一段真实的 Job
-Description 文本,系统解析出职位角色、技术栈、职级等结构化信息,并基于这些信息
-给出 3~6 个候选训练方向;每个方向都说明推荐理由(可追溯到 JD 原文)、打上标签、
-并给出建议的题目数量,以便我据此挑选方向,决定后续是否进入出题环节。
+As a user responsible for designing live-coding training content for a given position, I
+paste in a real Job Description text, and the system parses out structured information
+such as role, tech stack, and seniority, and based on that information gives 3-6
+candidate training directions; each direction states its recommendation rationale
+(traceable back to the JD text), carries tags, and gives a suggested question count, so
+that I can pick a direction based on this and decide whether to move on to question
+generation next.
 
-**Why this priority**: 这是整个训练内容生成流程的第一环——没有可靠的结构化提取
-和方向推荐,后续所有环节(出题、组卷)都无法开始;这是当前范围内唯一的用户故事,
-也是 MVP 的全部内容。
+**Why this priority**: This is the very first link in the entire training-content
+generation pipeline — without reliable structured extraction and direction
+recommendation, none of the downstream steps (question generation, paper assembly) can
+begin; this is the only user story in the current scope, and it is the entire content of
+the MVP.
 
-**Independent Test**: 可以通过粘贴一段真实 JD 文本、检查返回的角色/技术栈/职级
-摘要是否与 JD 内容一致,以及生成的 3~6 个方向是否都包含"可追溯理由 + 标签 + 建议
-题目数量"来独立验证,完全不依赖后续的题目生成功能。
+**Independent Test**: Can be independently verified by pasting in a real JD text,
+checking whether the returned role/tech-stack/seniority summary is consistent with the
+JD content, and whether the generated 3-6 directions each include a "traceable rationale
++ tags + suggested question count" — entirely without depending on the later
+question-generation feature.
 
 **Acceptance Scenarios**:
 
-1. **Given** 一段包含清晰角色、技术栈列表和职级描述的 JD 文本, **When** 提交解析,
-   **Then** 系统返回结构化的角色/技术栈/职级摘要,并生成 3~6 个候选训练方向,每个
-   方向都带有可追溯到 JD 原文的理由、至少一个标签、以及建议题目数量。
-2. **Given** 已生成的候选方向列表, **When** 查看任意一个方向的理由, **Then** 该理由
-   能清楚对应回 JD 原文中的具体语句或关键词(可核实,而非凭空生成)。
-3. **Given** 一段技术栈信息非常丰富、可映射出多个方向的 JD, **When** 提交解析,
-   **Then** 系统最多返回 6 个方向,不会无限增长。
+1. **Given** a JD text containing a clear role, a tech-stack list, and a seniority
+   description, **When** it is submitted for parsing, **Then** the system returns a
+   structured role/tech-stack/seniority summary and generates 3-6 candidate training
+   directions, each carrying a rationale traceable back to the JD text, at least one tag,
+   and a suggested question count.
+2. **Given** an already-generated list of candidate directions, **When** the rationale of
+   any direction is examined, **Then** that rationale clearly maps back to a specific
+   statement or keyword in the JD text (verifiable, not fabricated out of thin air).
+3. **Given** a JD whose tech-stack information is very rich and could map to many
+   directions, **When** it is submitted for parsing, **Then** the system returns at most
+   6 directions and does not grow without bound.
 
 ---
 
 ### Edge Cases
 
-- JD 文本过短、或明显不是职位描述(如无关文本、乱码)时,系统如何响应?
-- JD 中未提及明确职级时,系统如何标注职级?
-- 同一份 JD 中出现多个不同角色描述(例如"全栈/前端均可")时,如何处理角色提取?
-- JD 文本极长(远超正常职位描述篇幅)时,是否有截断或处理策略?
-- JD 所提技术栈过于宽泛或稀疏,不足以支撑 3 个有意义方向时,如何处理最少数量要求?
+- How should the system respond when the JD text is too short, or is clearly not a job
+  description (e.g., irrelevant text, garbled text)?
+- How should the system label seniority when the JD does not mention an explicit
+  seniority level?
+- How should role extraction be handled when the same JD contains multiple different
+  role descriptions (e.g., "full-stack or frontend both acceptable")?
+- Is there a truncation or handling strategy when the JD text is extremely long (far
+  beyond a normal job description's length)?
+- How should the minimum-count requirement be handled when the tech stack mentioned in
+  the JD is too broad or too sparse to support 3 meaningful directions?
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: 系统 MUST 接受一段自由格式的 JD 文本作为输入。
-- **FR-002**: 系统 MUST 从 JD 文本中提取职位角色信息(如"后端工程师""全栈工程师"等)。
-- **FR-003**: 系统 MUST 从 JD 文本中提取技术栈/技能列表(编程语言、框架、工具等)。
-- **FR-004**: 系统 MUST 从 JD 文本中提取或推断职级信息(如初级/中级/高级/资深)。
-- **FR-005**: 系统 MUST 基于提取出的角色/技术栈/职级信息,生成 3 到 6 个候选训练
-  方向,数量不得超出该区间。
-- **FR-006**: 每个候选训练方向 MUST 包含一条推荐理由,且该理由 MUST 能追溯到 JD
-  原文中的具体内容(引用原文片段或明确指出对应位置)。
-- **FR-007**: 每个候选训练方向 MUST 包含至少一个描述性标签。
-- **FR-008**: 每个候选训练方向 MUST 包含一个建议题目数量(数值)。
-- **FR-009**: 系统 MUST NOT 在本功能范围内生成具体的训练题目/任务内容——输出到
-  "候选方向推荐列表"为止,任务/题目生成属于后续独立功能。
-- **FR-010**: 当 JD 文本中没有明确职级信息时,系统 MUST 给出一个推断的职级,并
-  明确标注该职级为"推断"而非 JD 原文明示信息。
-- **FR-011**: 当 JD 文本内容不足以识别出任何职位角色或技术栈信息时,系统 MUST
-  拒绝该输入并提示使用者提供更完整的 JD 内容,不生成候选方向。
-- **FR-012**: 当提取出的信息足以识别角色/技术栈,但不足以支撑 3 个有意义的候选
-  方向时,系统 MUST 仍然返回少于 3 个方向(而非报错拒绝或凭空补足到 3 个),并让
-  返回的方向数量如实反映信息的丰富程度。
-- **FR-013**: 候选训练方向推荐结果 MUST 被持久化保存,并与产生它的 JD 提交记录
-  关联,以便后续的题目生成阶段可以引用同一份候选方向数据,而不需要使用者重新
-  提交 JD 文本。
+- **FR-001**: The system MUST accept a free-form JD text as input.
+- **FR-002**: The system MUST extract role information from the JD text (e.g., "Backend
+  Engineer", "Full-Stack Engineer", etc.).
+- **FR-003**: The system MUST extract a tech-stack/skills list from the JD text
+  (programming languages, frameworks, tools, etc.).
+- **FR-004**: The system MUST extract or infer seniority information from the JD text
+  (e.g., Junior/Mid-level/Senior/Staff).
+- **FR-005**: The system MUST generate 3 to 6 candidate training directions based on the
+  extracted role/tech-stack/seniority information; the count MUST NOT exceed this range.
+- **FR-006**: Each candidate training direction MUST include a recommendation rationale,
+  and that rationale MUST be traceable to specific content in the JD text (quoting the
+  original text or explicitly pointing to the corresponding location).
+- **FR-007**: Each candidate training direction MUST include at least one descriptive
+  tag.
+- **FR-008**: Each candidate training direction MUST include a suggested question count
+  (a numeric value).
+- **FR-009**: The system MUST NOT generate concrete training questions/task content
+  within the scope of this feature — the output stops at the "candidate direction
+  recommendation list"; task/question generation belongs to a separate, later feature.
+- **FR-010**: When the JD text has no explicit seniority information, the system MUST
+  provide an inferred seniority level, and MUST clearly mark that level as "inferred"
+  rather than explicitly stated in the original JD text.
+- **FR-011**: When the JD text content is insufficient to identify any role or tech-stack
+  information, the system MUST reject the input and prompt the user to provide more
+  complete JD content, without generating candidate directions.
+- **FR-012**: When the extracted information is sufficient to identify role/tech-stack
+  but insufficient to support 3 meaningful candidate directions, the system MUST still
+  return fewer than 3 directions (rather than rejecting with an error, or padding the
+  count up to 3 artificially), letting the returned direction count truthfully reflect
+  how rich the information is.
+- **FR-013**: The candidate training direction recommendation result MUST be persisted
+  and associated with the JD submission record that produced it, so that the later
+  question-generation stage can reference the same candidate-direction data without
+  requiring the user to resubmit the JD text.
 
 ### Key Entities *(include if feature involves data)*
 
-- **JD 提交记录 (JD Submission)**: 代表一次 JD 文本的提交,包含原始 JD 文本、
-  提取出的角色/技术栈/职级摘要、提交时间。
-- **候选训练方向 (Candidate Training Direction)**: 代表针对某次 JD 提交推荐出的
-  一个训练方向,包含方向名称、推荐理由(含 JD 原文引用)、标签列表、建议题目
-  数量;与其所属的 JD 提交记录关联。
+- **JD Submission**: Represents a single submission of JD text, containing the raw JD
+  text, the extracted role/tech-stack/seniority summary, and the submission timestamp.
+- **Candidate Training Direction**: Represents one training direction recommended for a
+  given JD submission, containing the direction name, recommendation rationale
+  (including a quote from the JD text), a list of tags, and a suggested question count;
+  associated with the JD submission it belongs to.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: 对于包含清晰角色、技术栈和职级信息的 JD,系统在单次提交内即可返回
-  结构化摘要和 3~6 个候选方向,使用者无需对提取结果做人工二次修正即可继续下一步
-  决策。
-- **SC-002**: 人工抽查候选方向理由时,能确认理由"确实来自 JD 原文"的比例达到
-  100%——不存在与原文脱节、凭空捏造的理由。
-- **SC-003**: 90% 以上的候选方向标签和建议题目数量,在使用者看来是合理、可直接
-  采纳而无需大幅调整的。
-- **SC-004**: 使用者从粘贴 JD 文本到看到可用的候选训练方向列表,可在几分钟内完成
-  一轮评估决策,不需要额外的人工整理或转换 JD 信息。
+- **SC-001**: For a JD that contains clear role, tech-stack, and seniority information,
+  the system returns a structured summary and 3-6 candidate directions within a single
+  submission, and the user can proceed to the next decision step without manually
+  correcting the extraction result.
+- **SC-002**: When manually spot-checking candidate-direction rationales, the proportion
+  confirmed to "genuinely come from the JD text" reaches 100% — there are no rationales
+  that are disconnected from the original text or fabricated out of thin air.
+- **SC-003**: 90% or more of the candidate-direction tags and suggested question counts
+  are, in the user's judgment, reasonable and directly adoptable without major
+  adjustment.
+- **SC-004**: The user can go from pasting the JD text to seeing a usable list of
+  candidate training directions, completing one round of evaluation and decision-making
+  within a few minutes, with no need for additional manual organization or conversion of
+  JD information.
 
 ## Assumptions
 
-- 使用者(内部训练内容设计者/招聘方)会提供真实、较完整的职位描述文本,而非仅有
-  职位名称的简短输入。
-- 职级分类采用行业通用的粗粒度分级(如:初级/中级/高级/资深),不需要对接某个
-  公司内部更细的职级体系。
-- 候选训练方向的推荐范围限定于技术能力相关方向(如特定技术栈、系统设计、算法
-  等),不涉及非技术类(如沟通表达、文化匹配)方向。
-- JD 文本可能是中文、英文或中英混合,系统需要能处理这两种语言的常见职位描述,
-  不要求支持其他语言。
-- 信息不足以识别角色/技术栈时,采用"拒绝输入并提示重新提供"而非"返回低置信度
-  猜测结果"(FR-011)——因为凭空猜测的结构化信息会污染后续所有环节。
-- 信息量不足以支撑 3 个有意义方向时,采用"如实返回少于 3 个方向"而非"报错拒绝"
-  或"凑数到 3 个"(FR-012)——避免为了凑数量而输出低质量、牵强的方向。
-- 候选训练方向推荐结果采用"持久化保存并关联 JD 提交记录"而非"仅作单次请求的
-  即时响应"(FR-013)——因为产品定位是多阶段流水线(JD 提取 → 方向推荐 → 未来的
-  题目生成),下一阶段需要引用同一份候选方向数据。以上三点均为基于上下文做出的
-  合理默认判断,如与预期不符,可通过 `/speckit-clarify` 调整。
+- The user (an internal training-content designer / recruiter) will provide a real,
+  reasonably complete job description text, rather than a short input containing only a
+  job title.
+- Seniority classification uses industry-common, coarse-grained tiers (e.g.,
+  Junior/Mid-level/Senior/Staff), and does not need to map to any specific company's more
+  granular internal leveling system.
+- The scope of recommended candidate training directions is limited to
+  technical-capability-related directions (e.g., a specific tech stack, system design,
+  algorithms, etc.), and does not cover non-technical directions (e.g., communication,
+  culture fit).
+- The JD text may be in Chinese, English, or a mix of both; the system needs to be able
+  to handle common job descriptions in these two languages, and is not required to
+  support other languages.
+- When information is insufficient to identify role/tech-stack, the approach is to
+  "reject the input and prompt for resubmission" rather than "return a low-confidence
+  guess" (FR-011) — because guessed structured information contaminates every downstream
+  step.
+- When there is not enough information to support 3 meaningful directions, the approach
+  is to "truthfully return fewer than 3 directions" rather than "reject with an error" or
+  "pad the count up to 3" (FR-012) — to avoid producing low-quality, forced directions
+  just to hit a count.
+- The candidate training direction recommendation result uses "persist and associate
+  with the JD submission record" rather than "a one-off response to a single request"
+  (FR-013) — because the product is positioned as a multi-stage pipeline (JD extraction →
+  direction recommendation → future question generation), and the next stage needs to
+  reference the same candidate-direction data. The above three points are all reasonable
+  default judgment calls made based on context; if they don't match actual intent, they
+  can be adjusted via `/speckit-clarify`.

@@ -1,4 +1,4 @@
-# Specification Quality Checklist: JD 结构化提取与候选训练方向推荐
+# Specification Quality Checklist: JD Structured Extraction and Candidate Training Direction Recommendation
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-27

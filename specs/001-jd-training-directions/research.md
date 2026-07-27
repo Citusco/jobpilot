@@ -1,97 +1,127 @@
-# Phase 0 Research: JD 结构化提取与候选训练方向推荐
+# Phase 0 Research: JD Structured Extraction and Candidate Training Direction Recommendation
 
-## 1. LLM structured output 机制
+## 1. LLM structured output mechanism
 
-**Decision**: 使用 OpenAI 官方 `openai` npm SDK 自带的 `zodResponseFormat`(位于
-`openai/helpers/zod`),直接把已有的 Zod schema 转换成 Structured Outputs 所需的
-JSON schema 传给 `chat.completions.parse(...)`;拿到响应后再用同一个 Zod schema 对
-`message.parsed` / 原始 JSON 做一次 `.parse()` 校验,双重保险后才写入图状态。
+**Decision**: Use `zodResponseFormat`, built into the official OpenAI `openai` npm SDK
+(located at `openai/helpers/zod`), to directly convert an existing Zod schema into the
+JSON schema required by Structured Outputs and pass it to `chat.completions.parse(...)`;
+after getting the response, run the same Zod schema's `.parse()` once more against
+`message.parsed` / the raw JSON, and only write it into graph state after this double
+safeguard.
 
-**Rationale**: `zodResponseFormat` 是 `openai` SDK 自带的 helper,不需要额外安装
-`zod-to-json-schema` 之类的第三方转换库,天然满足 Constitution I("LLM structured
-output 必须有对应 Zod schema,原始输出禁止未校验直接下游使用")且不增加清单外依赖。
-
-**Alternatives considered**:
-- 手写 JSON schema + 单独维护对应 Zod schema:两份 schema 容易漂移,且没有必要,
-  因为 SDK 已经提供了从 Zod 生成的路径。
-- 用 function calling / tool call 而非 `response_format`:效果等价,但 Structured
-  Outputs(`response_format: {type: "json_schema", strict: true}`)对"必须严格匹配
-  schema"这一点保证更强,更贴合"理由必须可追溯、字段必须完整"的验收标准。
-
-## 2. Postgres 客户端
-
-**Decision**: 使用 `drizzle-orm`(运行时,基于 `node-postgres` 驱动)+
-`drizzle-kit`(开发期 schema/migration 工具),不使用裸驱动手写 SQL。
-
-**Rationale**: 从纯实现复杂度看,两张表、一次事务性写入的规模用裸驱动 `pg` 本可以
-更省事;但这是一个求职/学习项目,用户明确希望借机练习 schema-as-code、类型安全
-query builder、migration 工作流这套目前招聘市场里更常被提及的技能组合,因此采用
-Drizzle —— TS 里定义 `schema.ts`,表结构变更时查询的 TS 类型自动同步,`drizzle-kit`
-负责生成/执行 migration,不需要再手写 SQL 迁移文件。
+**Rationale**: `zodResponseFormat` is a helper built into the `openai` SDK itself, so
+there's no need to separately install a third-party conversion library such as
+`zod-to-json-schema`; this naturally satisfies Constitution I ("LLM structured output
+must have a corresponding Zod schema; raw, unvalidated output must not be used downstream
+directly") without adding any dependency outside the list.
 
 **Alternatives considered**:
-- 裸驱动 `pg`:实现更简单、依赖更少,是"最小化实现路径"的选择,但不满足用户对
-  这个项目应该顺带练到 ORM 工作流的学习目标,故不采用。
-- Prisma:同样提供 schema-as-code 和 migration,但需要独立的 codegen 步骤和运行时
-  引擎,链路比 Drizzle 更重;Drizzle 更贴近"薄封装 + 直接映射 SQL"的风格,与项目
-  当前"不引入不必要抽象"的整体倾向更接近。
+- Hand-writing a JSON schema and separately maintaining a corresponding Zod schema: the
+  two schemas would easily drift apart, and there's no need for this since the SDK
+  already provides a path generated from Zod.
+- Using function calling / tool calls instead of `response_format`: the effect is
+  equivalent, but Structured Outputs (`response_format: {type: "json_schema", strict:
+  true}`) gives a stronger guarantee on "must strictly match the schema", which fits
+  better with the acceptance criteria that "rationales must be traceable and fields must
+  be complete".
 
-**已与用户确认**:选定 Drizzle。
+## 2. Postgres client
 
-## 3. 测试框架
+**Decision**: Use `drizzle-orm` (at runtime, based on the `node-postgres` driver) +
+`drizzle-kit` (a dev-time schema/migration tool), rather than hand-writing SQL against a
+bare driver.
 
-**Decision**: 使用 Jest(纯 ESM 项目需配合 `ts-jest` 的 ESM 预设,或等价的
-`NODE_OPTIONS=--experimental-vm-modules` 方案)。
-
-**Rationale**: 单纯从"对纯 ESM + TS 项目零配置"这一点看,Vitest 更省事;但用户从
-求职/学习角度出发,认为 Jest 生态最成熟、招聘方认知度最高,面试被问到"你用什么测试
-框架"时是更"安全"的默认答案,因此选择 Jest,愿意承担额外的 ESM 转译配置成本 ——
-这份配置本身也是值得在学习项目里踩一遍的坑。
-
-**Alternatives considered**:
-- Vitest:对当前纯 ESM 技术栈零配置、运行更快,mock/spy API 与 Jest 高度兼容,是
-  更"顺"的技术选择,但认知度/招聘市场熟悉度不如 Jest,故未采用。
-- Node 内置 `node:test`:足够轻量,但生态插件(覆盖率、mock 能力等)和招聘市场
-  认知度都不如 Jest。
-
-**已与用户确认**:选定 Jest + `ts-jest`(ESM 预设)。
-
-## 4. LangGraph 状态图形状
-
-**Decision**: 单一状态图,4 个阶段:
-1. `extractJdStructure`(节点):一次 LLM 调用,输出 `{role, techStack[], seniority,
-   seniorityInferred, sufficient, insufficientReason?}` —— 充分性判断
-   (FR-011)直接作为提取结果的一个字段,由同一次 LLM 调用给出,而不是额外套一层
-   启发式规则。
-2. 条件边:`sufficient === false` → 直接进入 `rejectInput` 终止节点,返回 FR-011
-   要求的拒绝提示,不再消耗第二次 LLM 调用。
-3. `generateCandidateDirections`(节点):第二次 LLM 调用,输入为结构化提取结果 +
-   **JD 原文全文**(不能只传摘要,否则理由无法追溯到原文用词,违反 FR-006),输出
-   0~6 个候选方向(允许 <3,不允许 >6,FR-005/FR-012)。
-4. `persistSubmission`(节点):在单个数据库事务内写入 JD 提交记录 + 候选方向列表
-   (FR-013),返回给路由层用于响应。
-
-**Rationale**: 每个节点单一职责、可独立 mock LLM/DB 测试(Constitution II);把
-"是否充分"的判断内建在提取节点里,避免为一个简单的布尔字段单独建一个节点或一次
-额外的 LLM 调用,符合"不为假设中的复杂度做设计"的原则。
+**Rationale**: Purely from an implementation-complexity standpoint, a scope of two
+tables and one transactional write could be handled more simply with the bare `pg`
+driver; but this is a job-hunting/learning project, and the user explicitly wants to use
+it as a chance to practice schema-as-code, a type-safe query builder, and a migration
+workflow — a skill set that is more commonly mentioned in today's hiring market — so
+Drizzle was adopted. A `schema.ts` is defined in TS; when the table structure changes,
+the TS types used in queries stay in sync automatically; `drizzle-kit` is responsible for
+generating/running migrations, so there's no need to hand-write SQL migration files.
 
 **Alternatives considered**:
-- 用一次 LLM 调用同时完成提取 + 方向生成:减少一次往返,但会导致"信息不足时被
-  拒绝"和"信息充分但稀疏时返回 <3 个方向"这两条分支逻辑全部耦合进一次生成里,
-  测试和 prompt 都更难维护;拆开后各自的失败模式(拒绝 vs. 数量不足)边界更清晰。
-- 用独立的规则引擎判断"是否充分":JD 文本的语言/结构千变万化,规则引擎难以泛化,
-  且引入了清单外的新组件;交给 LLM 在同一次提取调用里判断更简单可靠。
+- Bare `pg` driver: simpler to implement, fewer dependencies, the "minimal implementation
+  path" choice — but it doesn't satisfy the user's learning goal of practicing an ORM
+  workflow through this project, so it was not adopted.
+- Prisma: also provides schema-as-code and migrations, but requires a separate codegen
+  step and a runtime engine, making the pipeline heavier than Drizzle's; Drizzle is
+  closer to a "thin wrapper + directly maps to SQL" style, which is closer to the
+  project's overall leaning toward "don't introduce unnecessary abstraction".
 
-## 5. 候选方向数量下限的边界处理
+**Confirmed with the user**: Drizzle was selected.
 
-**Decision**: 沿用 spec 现有 Assumptions 中已经做出的默认判断 —— 一旦 FR-011 判定
-"信息充分"(即角色/技术栈可识别),`generateCandidateDirections` 节点最少返回 1 个
-方向;0 个方向的情况只应发生在 FR-011 直接拒绝的分支,不会出现"充分但一个方向都
-生成不出来"的中间态。
+## 3. Test framework
 
-**Rationale**: spec 的 Assumptions 部分已经对这一模糊点做了说明并标注"如与预期不符
-可通过 `/speckit-clarify` 调整",这里不重新引入新的未决问题,只是在实现层面明确
-"充分性判断"和"数量下限"是同一个阈值的两侧,避免图里出现无法归类的第三态。
+**Decision**: Use Jest (a pure-ESM project needs to pair this with `ts-jest`'s ESM
+preset, or the equivalent `NODE_OPTIONS=--experimental-vm-modules` setup).
 
-**Alternatives considered**: 无 —— 这是对 spec 既有假设的技术落地,不是新的设计
-决策分支。
+**Rationale**: Purely from the standpoint of "zero configuration for a pure ESM + TS
+project", Vitest is more convenient; but from a job-hunting/learning perspective, the
+user considers Jest's ecosystem the most mature and its recognition among employers the
+highest — a "safer" default answer when asked in an interview "what testing framework do
+you use" — so Jest was chosen, accepting the extra ESM transpilation configuration cost;
+that configuration cost is itself worth going through once in a learning project.
+
+**Alternatives considered**:
+- Vitest: zero configuration and faster execution for the current pure-ESM tech stack,
+  with a mock/spy API highly compatible with Jest's — a more "frictionless" technical
+  choice, but with lower recognition/familiarity in the hiring market than Jest, so it
+  was not adopted.
+- Node's built-in `node:test`: lightweight enough, but its ecosystem plugins (coverage,
+  mocking capability, etc.) and hiring-market recognition both fall short of Jest's.
+
+**Confirmed with the user**: Jest + `ts-jest` (ESM preset) was selected.
+
+## 4. Shape of the LangGraph state graph
+
+**Decision**: A single state graph with 4 stages:
+1. `extractJdStructure` (node): a single LLM call, outputting `{role, techStack[],
+   seniority, seniorityInferred, sufficient, insufficientReason?}` — the sufficiency
+   judgment (FR-011) is directly a field of the extraction result, given by that same LLM
+   call, rather than an extra layer of heuristic rules bolted on.
+2. Conditional edge: `sufficient === false` → goes directly to the `rejectInput`
+   terminal node, returning the rejection message required by FR-011, without spending a
+   second LLM call.
+3. `generateCandidateDirections` (node): a second LLM call, taking the structured
+   extraction result + **the full JD original text** as input (a summary alone is not
+   enough, otherwise the rationale can't be traced back to the original wording,
+   violating FR-006), outputting 0-6 candidate directions (fewer than 3 allowed, more
+   than 6 not allowed, FR-005/FR-012).
+4. `persistSubmission` (node): writes the JD submission record + the candidate-direction
+   list within a single database transaction (FR-013), and returns the result to the
+   routing layer for the response.
+
+**Rationale**: Each node has a single responsibility and can be independently mocked and
+tested for LLM/DB (Constitution II); building the "sufficiency" judgment into the
+extraction node avoids creating a separate node or an extra LLM call for a single boolean
+field, in keeping with the principle of "don't design for hypothetical complexity".
+
+**Alternatives considered**:
+- Doing extraction + direction generation in a single LLM call: saves one round trip,
+  but would couple both the "reject when information is insufficient" branch and the
+  "return <3 directions when information is sufficient but sparse" branch into a single
+  generation step, making both testing and the prompt harder to maintain; splitting them
+  apart gives each failure mode (rejection vs. insufficient count) a clearer boundary.
+- Using a separate rule engine to judge "sufficiency": the language/structure of JD text
+  varies too widely for a rule engine to generalize well, and it would introduce a new
+  component outside the list; leaving the judgment to the LLM within the same extraction
+  call is simpler and more reliable.
+
+## 5. Boundary handling for the lower bound on the number of candidate directions
+
+**Decision**: Follow the default judgment call already made in the spec's existing
+Assumptions section — once FR-011 determines that "information is sufficient" (i.e.,
+role/tech-stack can be identified), the `generateCandidateDirections` node returns at
+least 1 direction; a count of 0 directions should only occur on the branch where FR-011
+directly rejects the input, and there should be no intermediate state of "sufficient but
+unable to generate even a single direction".
+
+**Rationale**: The spec's Assumptions section has already addressed this ambiguous point
+and noted that it "can be adjusted via `/speckit-clarify` if it doesn't match actual
+intent"; this does not reintroduce a new open question — it simply makes explicit, at
+the implementation level, that "sufficiency judgment" and "lower bound on count" are two
+sides of the same threshold, avoiding an unclassifiable third state in the graph.
+
+**Alternatives considered**: None — this is the technical realization of an assumption
+the spec already makes, not a new design-decision branch.
