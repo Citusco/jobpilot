@@ -38,7 +38,7 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, and `drizzle.
 
 **Purpose**: Project initialization — this repository currently has no `package.json` or `src/` yet.
 
-- [ ] T001 Initialize the Node.js + TypeScript project: `package.json` (ES modules only, per CLAUDE.md), `tsconfig.json` (strict mode, Node.js 20 LTS target), and the empty `src/`/`tests/` folder skeleton from plan.md's Project Structure
+- [X] T001 Initialize the Node.js + TypeScript project: `package.json` (ES modules only, per CLAUDE.md), `tsconfig.json` (strict mode, Node.js 20 LTS target), and the empty `src/`/`tests/` folder skeleton from plan.md's Project Structure
 - [ ] T002 [P] Add runtime dependencies to `package.json`: `fastify`, `zod`, `openai`, `@langchain/langgraph`, `drizzle-orm`, and the Postgres driver Drizzle needs at runtime
 - [ ] T003 [P] Add dev dependencies to `package.json`: `drizzle-kit`, `jest`, `ts-jest`, `@types/jest`, `eslint` (+ TypeScript ESLint plugin)
 - [ ] T004 [P] Configure ESLint and add the `npm run dev` / `npm run test` / `npm run typecheck` / `npm run lint` scripts in `package.json` to match the commands documented in CLAUDE.md
