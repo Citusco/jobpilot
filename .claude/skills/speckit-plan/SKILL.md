@@ -65,9 +65,11 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Fill Technical Context (mark unknowns as "NEEDS CLARIFICATION")
    - Fill Constitution Check section from constitution
    - Evaluate gates (ERROR if violations unjustified)
-   - Phase 0: Generate research.md (resolve all NEEDS CLARIFICATION)
-   - Phase 1: Generate data-model.md, contracts/, quickstart.md
+   - Phase 0: Generate research.md only if genuinely needed (see Phase 0 below)
+   - Phase 1: Generate data-model.md, contracts/, and/or quickstart.md, each only if genuinely needed (see Phase 1 below)
    - Re-evaluate Constitution Check post-design
+
+**Default artifact set is spec.md + plan.md + tasks.md only.** research.md, data-model.md, contracts/, and quickstart.md are each generated independently of one another, only when this specific feature genuinely needs that artifact. Skipping one (or all) of them is the expected default, not a shortcut — do not generate an artifact just because the template lists it as possible output.
 
 ## Mandatory Post-Execution Hooks
 
@@ -106,16 +108,18 @@ Check if `.specify/extensions.yml` exists in the project root.
 
 ## Completion Report
 
-Command ends after Phase 1 design. Report branch, IMPL_PLAN path, and generated artifacts.
+Command ends after Phase 1 design. Report branch, IMPL_PLAN path, which of research.md/data-model.md/contracts//quickstart.md were generated, and — for each one skipped — a one-line reason why it wasn't needed.
 
 ## Phases
 
 ### Phase 0: Outline & Research
 
+**Only produce `research.md` if there are real unresolved technology/design choices** — unknowns marked NEEDS CLARIFICATION in Technical Context, a new dependency outside CLAUDE.md's locked stack that needs justifying (Constitution IV), or a non-obvious integration pattern worth recording a decision for. If Technical Context has no NEEDS CLARIFICATION markers and no new stack additions, skip this artifact entirely and say so in the Completion Report — do not manufacture research questions to fill the file.
+
 1. **Extract unknowns from Technical Context** above:
    - For each NEEDS CLARIFICATION → research task
-   - For each dependency → best practices task
-   - For each integration → patterns task
+   - For each new (non-locked-stack) dependency → best practices / justification task
+   - For each non-obvious integration → patterns task
 
 2. **Generate and dispatch research agents**:
 
@@ -131,31 +135,30 @@ Command ends after Phase 1 design. Report branch, IMPL_PLAN path, and generated 
    - Rationale: [why chosen]
    - Alternatives considered: [what else evaluated]
 
-**Output**: research.md with all NEEDS CLARIFICATION resolved
+**Output**: research.md (only if generated) with all NEEDS CLARIFICATION resolved
 
 ### Phase 1: Design & Contracts
 
-**Prerequisites:** `research.md` complete
+Each of the three artifacts below is independent — generate only the ones this feature genuinely needs.
 
-1. **Extract entities from feature spec** → `data-model.md`:
+1. **`data-model.md`** — only if the feature introduces new entities, a new database schema, or new state-graph state shape worth documenting separately from plan.md. A feature with no new persisted/structured data doesn't need this file.
    - Entity name, fields, relationships
    - Validation rules from requirements
    - State transitions if applicable
 
-2. **Define interface contracts** (if project has external interfaces) → `/contracts/`:
+2. **`/contracts/`** — only if the feature exposes a new or changed external interface (HTTP endpoint, CLI command, public function signature consumed elsewhere).
    - Identify what interfaces the project exposes to users or other systems
    - Document the contract format appropriate for the project type
-   - Examples: public APIs for libraries, command schemas for CLI tools, endpoints for web services, grammars for parsers, UI contracts for applications
-   - Skip if project is purely internal (build scripts, one-off tools, etc.)
+   - Examples: public APIs for libraries, command schemas for CLI tools, endpoints for web services
+   - Skip if the feature is purely internal or doesn't change an existing interface
 
-3. **Create quickstart validation guide** → `quickstart.md`:
+3. **`quickstart.md`** — only if a runnable end-to-end validation guide adds real value beyond what's already in spec.md's acceptance scenarios (e.g. multi-step setup, non-obvious manual verification). For most features, the spec's acceptance scenarios are enough and this file is unnecessary.
    - Document runnable validation scenarios that prove the feature works end-to-end
    - Include prerequisites, setup commands, test/run commands, and expected outcomes
    - Use links or references to contracts and data model details instead of duplicating them
    - Do not include full implementation code, model/service/controller bodies, migrations, or complete test suites
-   - Keep this artifact as a validation/run guide; implementation details belong in `tasks.md` and the implementation phase
 
-**Output**: data-model.md, /contracts/*, quickstart.md
+**Output**: whichever of data-model.md / contracts/ / quickstart.md were genuinely needed — state explicitly in the Completion Report which were skipped and why
 
 ## Key rules
 
