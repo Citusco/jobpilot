@@ -1,0 +1,133 @@
+openapi: 3.0.3
+info:
+  title: JobPilot - JD 结构化提取与候选训练方向推荐
+  version: "0.1.0"
+  description: >
+    对应 specs/001-jd-training-directions。本 feature 范围内只有一个端点:
+    提交 JD 文本,同步返回结构化摘要 + 候选训练方向列表,或在信息不足时返回拒绝响应。
+
+paths:
+  /jd-submissions:
+    post:
+      summary: 提交 JD 文本并获取候选训练方向
+      operationId: createJdSubmission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JdSubmissionRequest'
+      responses:
+        '201':
+          description: >
+            提取成功并生成候选训练方向(数量在 0~6 之间,信息稀疏时可能少于 3 个,
+            见 FR-012)。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JdSubmissionAccepted'
+        '422':
+          description: JD 文本不足以识别角色/技术栈,提交被拒绝(FR-011)。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JdSubmissionRejected'
+        '400':
+          description: 请求体本身不合法(如缺少 text 字段、text 为空字符串)。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+components:
+  schemas:
+    JdSubmissionRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: 自由格式的 Job Description 原文(FR-001)。
+
+    JdSubmissionAccepted:
+      type: object
+      required: [id, status, extraction, directions, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 供未来题目生成阶段引用同一份候选方向数据(FR-013)。
+        status:
+          type: string
+          enum: [accepted]
+        extraction:
+          $ref: '#/components/schemas/JdExtraction'
+        directions:
+          type: array
+          minItems: 0
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/CandidateTrainingDirection'
+        createdAt:
+          type: string
+          format: date-time
+
+    JdSubmissionRejected:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          type: string
+          enum: [rejected]
+        reason:
+          type: string
+          description: 提示使用者提供更完整 JD 内容的说明(FR-011)。
+
+    JdExtraction:
+      type: object
+      required: [role, techStack, seniority, seniorityInferred]
+      properties:
+        role:
+          type: string
+        techStack:
+          type: array
+          items:
+            type: string
+        seniority:
+          type: string
+        seniorityInferred:
+          type: boolean
+          description: true 表示 JD 原文未明示职级,系统进行了推断(FR-010)。
+
+    CandidateTrainingDirection:
+      type: object
+      required: [id, name, rationale, tags, suggestedQuestionCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        rationale:
+          type: string
+          description: 必须能追溯到 JD 原文中的具体内容(FR-006)。
+        tags:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        suggestedQuestionCount:
+          type: integer
+          minimum: 1
+
+    ValidationError:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        issues:
+          type: array
+          items:
+            type: object
