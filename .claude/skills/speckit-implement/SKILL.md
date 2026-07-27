@@ -67,11 +67,13 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Per-Ticket Branch Requirement
 
-**Every ticket's implementation MUST happen on its own branch, never committed directly onto the feature branch.** The feature branch (e.g. `001-jd-training-directions`) holds only spec-kit design artifacts (spec.md, plan.md, tasks.md, research.md, etc.) — implementation commits do not accumulate there.
+**Every ticket's implementation MUST happen on its own branch, never committed directly onto the feature branch.**
 
-- Before writing any code for a ticket, create a new branch off the current tip of the feature branch, named `<ticket-key-lowercase>-<short-kebab-slug>` (e.g. `scrum-6-initialize-project-skeleton` for ticket `SCRUM-6`). Confirm you're branching from the feature branch, not from `main`, so the branch has the spec/plan/tasks context.
+- **Before creating the branch, always `git fetch origin` and branch from an up-to-date `origin/main`** — not from the feature branch, and not from another ticket's branch. This project merges each ticket's branch into `main` shortly after it's implemented, so `main` (not the feature branch) is the actual up-to-date source of truth for prior tickets' work. Branching from a stale local `main` or from a sibling ticket branch risks missing prerequisite files (e.g. a task that depends on an earlier task's output).
+- Name the branch `<ticket-key-lowercase>-<short-kebab-slug>` (e.g. `scrum-6-initialize-project-skeleton` for ticket `SCRUM-6`).
+- If the ticket depends on a prior task/ticket whose work hasn't been merged into `main` yet, stop and tell the user rather than branching off that unmerged sibling branch — merging order matters here.
 - Do all of that ticket's work — code, `tasks.md` checkbox update, commits — on this branch. Do not switch back to the feature branch and commit there.
-- Push the ticket branch to `origin` once the task is complete and validated. Do not merge it back into the feature branch or `main` yourself — leave that PR decision to the user, the same as with any other branch in this project.
+- Push the ticket branch to `origin` once the task is complete and validated. Do not merge it back into `main` yourself — leave that PR decision to the user, the same as with any other branch in this project.
 - One branch generally maps to one ticket, but if the user asks to implement several related `[P]` tasks together in one pass, one branch may cover all of them — use judgment, and confirm with the user if it's ambiguous whether tasks should be split across branches or combined.
 
 ## Outline
