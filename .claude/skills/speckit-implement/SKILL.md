@@ -65,6 +65,15 @@ You **MUST** consider the user input before proceeding (if not empty).
 - Do not implement a task with no corresponding Jira ticket. If `tasks.md` contains tasks that have no matching ticket (e.g. added after the last Jira import), surface this to the user before implementing rather than silently doing untracked work.
 - When a task is completed, mark it `[X]` in `tasks.md` (per step 8 below) **and** transition its Jira ticket to the appropriate status via the Atlassian MCP tools, so the board doesn't go stale.
 
+## Per-Ticket Branch Requirement
+
+**Every ticket's implementation MUST happen on its own branch, never committed directly onto the feature branch.** The feature branch (e.g. `001-jd-training-directions`) holds only spec-kit design artifacts (spec.md, plan.md, tasks.md, research.md, etc.) — implementation commits do not accumulate there.
+
+- Before writing any code for a ticket, create a new branch off the current tip of the feature branch, named `<ticket-key-lowercase>-<short-kebab-slug>` (e.g. `scrum-6-initialize-project-skeleton` for ticket `SCRUM-6`). Confirm you're branching from the feature branch, not from `main`, so the branch has the spec/plan/tasks context.
+- Do all of that ticket's work — code, `tasks.md` checkbox update, commits — on this branch. Do not switch back to the feature branch and commit there.
+- Push the ticket branch to `origin` once the task is complete and validated. Do not merge it back into the feature branch or `main` yourself — leave that PR decision to the user, the same as with any other branch in this project.
+- One branch generally maps to one ticket, but if the user asks to implement several related `[P]` tasks together in one pass, one branch may cover all of them — use judgment, and confirm with the user if it's ambiguous whether tasks should be split across branches or combined.
+
 ## Outline
 
 1. Run `.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks` from repo root and parse FEATURE_DIR and AVAILABLE_DOCS list. All paths must be absolute. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
