@@ -40,10 +40,10 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, and `drizzle.
 
 - [X] T001 Initialize the Node.js + TypeScript project: `package.json` (ES modules only, per CLAUDE.md), `tsconfig.json` (strict mode, Node.js 20 LTS target), and the empty `src/`/`tests/` folder skeleton from plan.md's Project Structure
 - [X] T002 [P] Add runtime dependencies to `package.json`: `fastify`, `zod`, `openai`, `@langchain/langgraph`, `drizzle-orm`, and the Postgres driver Drizzle needs at runtime
-- [ ] T003 [P] Add dev dependencies to `package.json`: `drizzle-kit`, `jest`, `ts-jest`, `@types/jest`, `eslint` (+ TypeScript ESLint plugin)
-- [ ] T004 [P] Configure ESLint and add the `npm run dev` / `npm run test` / `npm run typecheck` / `npm run lint` scripts in `package.json` to match the commands documented in CLAUDE.md
-- [ ] T005 [P] Configure Jest for ESM + TypeScript in `jest.config.ts` using the `ts-jest` ESM preset (per research.md §3)
-- [ ] T006 [P] Create `drizzle.config.ts` at the repository root (schema path `src/db/schema.ts`, migrations output `src/db/migrations/`, reads `DATABASE_URL`)
+- [X] T003 [P] Add dev dependencies to `package.json`: `drizzle-kit`, `jest`, `ts-jest`, `@types/jest`, `eslint` (+ TypeScript ESLint plugin)
+- [X] T004 [P] Configure ESLint and add the `npm run dev` / `npm run test` / `npm run typecheck` / `npm run lint` scripts in `package.json` to match the commands documented in CLAUDE.md
+- [X] T005 [P] Configure Jest for ESM + TypeScript in `jest.config.ts` using the `ts-jest` ESM preset (per research.md §3)
+- [X] T006 [P] Create `drizzle.config.ts` at the repository root (schema path `src/db/schema.ts`, migrations output `src/db/migrations/`, reads `DATABASE_URL`)
 
 ---
 
