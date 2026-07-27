@@ -55,6 +55,16 @@ You **MUST** consider the user input before proceeding (if not empty).
     After emitting the block above you MUST actually invoke the hook and wait for it to finish before continuing. Run it the same way you would run the command yourself in this agent/session (the invocation may differ from the literal `{command}` id shown above, e.g. a skills-mode agent runs it as `/skill:speckit-...` or `$speckit-...`). Emitting the block alone does not run the hook.
 - If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently
 
+## Jira Ticket Requirement
+
+**Implementation MUST be driven by a Jira ticket, not by `tasks.md` in isolation.** This project tracks tasks in the `SCRUM` project on the `nathannan` Atlassian site (issue hierarchy: Epic → Story → Subtask, one Subtask per `tasks.md` task, titled `T0xx: <description>`).
+
+- Before implementing anything, identify which Jira ticket (issue key, e.g. `SCRUM-23`) the work corresponds to. If the user specified a ticket key or a task ID when invoking this command, use that. Otherwise, **ask the user which Jira ticket(s) to implement** — do not pick a task out of `tasks.md` on your own initiative.
+- Fetch the ticket via the Atlassian MCP tools (`getJiraIssue`) to read its current summary, description, and status. Match the ticket's Task ID (from its `T0xx:` summary prefix) to the corresponding checklist line in `tasks.md` to confirm they refer to the same unit of work.
+- **If the ticket's summary/description alone isn't enough to implement correctly** (missing file path, unclear acceptance criteria, ambiguous dependency), fall back to that feature's design docs under `specs/<feature>/`: start with the matching line in `tasks.md` (exact file path, `[P]`/dependency notes), then `plan.md` (architecture, tech stack, project structure), and — if still unclear — `data-model.md`, `research.md`, `contracts/`, and `quickstart.md` as relevant. The ticket is the entry point; the spec docs are the source of truth for detail, not the other way around.
+- Do not implement a task with no corresponding Jira ticket. If `tasks.md` contains tasks that have no matching ticket (e.g. added after the last Jira import), surface this to the user before implementing rather than silently doing untracked work.
+- When a task is completed, mark it `[X]` in `tasks.md` (per step 8 below) **and** transition its Jira ticket to the appropriate status via the Atlassian MCP tools, so the board doesn't go stale.
+
 ## Outline
 
 1. Run `.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks` from repo root and parse FEATURE_DIR and AVAILABLE_DOCS list. All paths must be absolute. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
@@ -150,6 +160,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Execution flow**: Order and dependency requirements
 
 6. Execute implementation following the task plan:
+   - **Before starting each task**: apply the ## Jira Ticket Requirement gate above — confirm the task's Jira ticket, and fall back to `plan.md`/spec docs if the ticket alone is unclear
    - **Phase-by-phase execution**: Complete each phase before moving to the next
    - **Respect dependencies**: Run sequential tasks in order, parallel tasks [P] can run together
    - **Follow TDD approach**: Execute test tasks before their corresponding implementation tasks
