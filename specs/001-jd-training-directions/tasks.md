@@ -66,9 +66,9 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, and `drizzle.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T007 Define the Drizzle schema for the `jd_submissions` and `candidate_training_directions` tables in `src/db/schema.ts`, using `pgTable(...)` from `drizzle-orm/pg-core` per data-model.md's field/constraint tables
-- [ ] T008 Generate the initial migration with `drizzle-kit generate` into `src/db/migrations/` (depends on T007)
-- [ ] T009 [P] Implement Drizzle client initialization in `src/db/client.ts`, based on the node-postgres driver and `DATABASE_URL` (depends on T007)
+- [X] T007 Define the Drizzle schema for the `jd_submissions` and `candidate_training_directions` tables in `src/db/schema.ts`, using `pgTable(...)` from `drizzle-orm/pg-core` per data-model.md's field/constraint tables
+- [X] T008 Generate the initial migration with `drizzle-kit generate` into `src/db/migrations/` (depends on T007)
+- [X] T009 [P] Implement Drizzle client initialization in `src/db/client.ts`, based on the node-postgres driver and `DATABASE_URL` (depends on T007)
 - [ ] T010 [P] Implement a thin OpenAI SDK client wrapper in `src/llm/openaiClient.ts` — connects directly using `OPENAI_API_KEY`, no gateway indirection (Constitution IV)
 - [ ] T011 [P] Define the JD-extraction Zod schema in `src/schemas/jdExtraction.schema.ts` (`sufficient`, `insufficientReason`, `role`, `techStack`, `seniority`, `seniorityInferred`) per data-model.md
 - [ ] T012 [P] Define the candidate-directions Zod schema in `src/schemas/candidateDirections.schema.ts` (`directions[]`, max 6, each with `name`/`rationale`/`tags`/`suggestedQuestionCount`) per data-model.md
