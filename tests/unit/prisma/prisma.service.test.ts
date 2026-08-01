@@ -25,4 +25,16 @@ describe('PrismaService', () => {
     expect(disconnectSpy).toHaveBeenCalledTimes(1);
     disconnectSpy.mockRestore();
   });
+
+  it('propagates a connection failure from onModuleInit', async () => {
+    const connectionError = new Error('connection refused');
+    const connectSpy = jest
+      .spyOn(PrismaClient.prototype, '$connect')
+      .mockRejectedValue(connectionError);
+    const service = new PrismaService();
+
+    await expect(service.onModuleInit()).rejects.toThrow(connectionError);
+
+    connectSpy.mockRestore();
+  });
 });

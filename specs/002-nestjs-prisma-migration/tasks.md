@@ -96,8 +96,8 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, `prisma/` at 
 
 ## Final Phase: Polish & Cross-Cutting Concerns
 
-- [ ] T011 [P] Manually run quickstart.md's three validation scenarios end-to-end against a running `npm run dev` server
-- [ ] T012 Request an independent review of the tests added in T004/T006 from the `test-reviewer` subagent (Constitution V — avoid the implementer grading their own tests)
+- [X] T011 [P] Manually run quickstart.md's three validation scenarios end-to-end against a running `npm run dev` server — §2 (health check) and §3 (quality gate) fully verified; §1 (migration against a fresh DB) could NOT be run end-to-end (no Postgres available in this environment) — verified instead via `prisma validate` + `prisma migrate diff --from-empty`, see data-model.md and PR description for what's still unverified
+- [X] T012 Request an independent review of the tests added in T004/T006 from the `test-reviewer` subagent (Constitution V — avoid the implementer grading their own tests). Findings: coverage adequate for scope; 2 real gaps found and fixed — (1) no test exercised full `AppModule` DI wiring (`HealthModule` + `@Global PrismaModule` together), fixed by rebasing the contract test on `AppModule` with `PrismaService` overridden by a stub; (2) `PrismaService` had no failure-path test, fixed by adding a `$connect`-rejects case
 - [ ] T013 [P] If implementation surfaced a new technical pattern or pitfall (e.g. NestJS+ESM decorator metadata, enabling pgvector via Prisma), offer to generate a learning note before closing out (CLAUDE.md Workflow)
 
 ---
