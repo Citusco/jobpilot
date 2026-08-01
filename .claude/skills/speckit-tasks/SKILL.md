@@ -144,6 +144,29 @@ The tasks.md should be immediately executable - each task must be specific enoug
 
 **Tests are OPTIONAL**: Only generate test tasks if explicitly requested in the feature specification or if user requests TDD approach.
 
+**Task granularity (project practice)**: This is a personal learning project — the SDD
+process is there to be experienced and to keep quality/traceability high, not maximized
+for its own sake. Two candidate tasks may be collapsed into one ONLY when BOTH hold:
+
+1. **Same kind/functional area** — they're the same category of work within the same
+   component (e.g. several unit tests for different nodes/schemas in the same phase,
+   several similarly-shaped model definitions, several trivial config files in Setup).
+   Different functional areas (e.g. the data-access layer vs. an HTTP controller vs. a
+   test suite for a different component) stay separate tasks even when nothing forces an
+   order between them — task splitting isn't only about dependency, it's also about
+   keeping each task a coherent, single-concern unit of work.
+2. **No ordering dependency between them** — neither task needs the other to exist
+   first.
+
+If either condition fails — different functional area, OR a real dependency — keep them
+as separate tasks. Do not spread same-kind, independent items across separate task IDs
+just because the template's per-entity/per-contract mapping rules would otherwise produce
+one ID each. Collapsing changes the *count* of tasks, not their precision: a collapsed
+task's description must still name every file/entity/scenario it covers, as specifically
+as the split-out version would have. Genuine ordering boundaries are never collapsed away
+— a test task still precedes its implementation task, Foundational still precedes User
+Story phases, and Polish still comes last.
+
 ### Checklist Format (REQUIRED)
 
 Every task MUST strictly follow this format:

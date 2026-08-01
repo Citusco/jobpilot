@@ -51,7 +51,7 @@ Full policy lives in `.specify/memory/constitution.md` (Development Workflow sec
   `/speckit-specify → /speckit-plan → /speckit-tasks → /speckit-implement`
 - `/speckit-specify` creates the feature branch + the feature's one Jira Story.
 - `/speckit-plan` generates spec.md/plan.md/tasks.md by default; research.md, data-model.md, contracts/, quickstart.md only when genuinely needed — skipping them is the normal case, not a shortcut.
-- tasks.md (T001, T002, ...) is an **internal checklist only** — never mapped to Jira subtasks.
+- tasks.md (T001, T002, ...) is an **internal checklist only** — never mapped to Jira subtasks. This is a learning project, so task granularity is coarse by design: two candidate tasks only collapse into one when they're both the *same kind of work in the same functional area* (e.g. several unit tests, several similarly-shaped model definitions) *and* have no ordering dependency between them — a different functional area (e.g. data layer vs. HTTP layer) stays split even with no dependency, and a real ordering dependency (test before its implementation, Foundational before a user story, Polish last) also stays split. See `.claude/skills/speckit-tasks/SKILL.md`'s "Task granularity" note for the full rule.
 - `/speckit-implement` runs all tasks continuously on the one feature branch — no branching, pushing, or Jira sync per task; push once and open one PR when the feature (or the requested stopping point) is done.
 - `/speckit-clarify`, `/speckit-analyze`, `/speckit-converge` — optional, on-demand, invoke directly when needed.
 - `/speckit-checklist`, `/speckit-taskstoissues` — not part of either workflow; invoke directly only for a specific one-off need.
