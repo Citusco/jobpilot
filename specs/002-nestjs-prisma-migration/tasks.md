@@ -87,8 +87,8 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, `prisma/` at 
 
 **Independent Test**: Run typecheck/lint/test; grep the codebase and dependency manifest for Fastify/Drizzle references (spec.md Acceptance Scenarios 1-2; quickstart.md §3).
 
-- [ ] T009 [US3] Remove the old Fastify/Drizzle code: delete `src/db/` (`schema.ts`, `client.ts`, `migrations/`, `repositories/`), `drizzle.config.ts`, and the unused `src/routes/` placeholder (depends on T005, T008 — both new equivalents must exist first)
-- [ ] T010 [US3] Run `npm run typecheck && npm run lint && npm run test` and fix any failures; confirm no `fastify`/`drizzle` references remain in `package.json` or `src/` (FR-006, FR-007, SC-003) (depends on T009)
+- [X] T009 [US3] Remove the old Fastify/Drizzle code: delete `src/db/` (`schema.ts`, `client.ts`, `migrations/`, `repositories/`), `drizzle.config.ts`, and the unused `src/routes/` placeholder (depends on T005, T008 — both new equivalents must exist first)
+- [X] T010 [US3] Run `npm run typecheck && npm run lint && npm run test` and fix any failures; confirm no `fastify`/`drizzle` references remain in `package.json` or `src/` (FR-006, FR-007, SC-003) (depends on T009)
 
 **Checkpoint**: All three user stories complete — this is the whole feature (foundation only, no business endpoints per spec.md Assumptions).
 
