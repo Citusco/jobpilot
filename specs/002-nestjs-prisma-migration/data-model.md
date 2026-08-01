@@ -64,6 +64,12 @@ migration is ever recreated from scratch. `JdSubmission.techStack` needs no such
 was nullable in the original schema too, so Prisma's default (no `NOT NULL`) already
 matches.
 
+**Update**: subsequently verified end-to-end against a real `pgvector/pgvector:pg16`
+Docker container — `npx prisma migrate dev` applied this hand-written migration with no
+drift detected, and `psql \d` confirmed both tables match this document exactly,
+including `tags TEXT[] NOT NULL` and both CHECK constraints, with the `vector` extension
+installed. The schema-diff cross-check described above turned out to be fully accurate.
+
 ## State transitions
 
 None — both entities are write-once for the scope of this feature (this feature does not
