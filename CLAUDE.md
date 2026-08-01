@@ -1,31 +1,43 @@
 # JobPilot — Live Coding Training Generator
 
-## Bash commands
+## Bash commands (API/persistence service)
 - npm run dev: start the local dev server
 - npm run test: run unit tests
 - npm run typecheck: TypeScript type checking
 - npm run lint: ESLint check
 
 ## Tech stack (do not introduce libraries not listed here without discussing first)
-- Backend: Node.js + TypeScript + Fastify
-- Orchestration: LangGraph.js
-- Vector store: pgvector (in Postgres)
+The stack is split across two services with an explicit boundary — see constitution
+Principle IV for the full rationale:
+- **API & persistence service**: Node.js + TypeScript + NestJS + Prisma (ORM/migrations
+  for Postgres, including pgvector as the vector store). Owns the public API surface and
+  all persistent storage.
+- **Agent orchestration service**: Python + FastAPI + LangGraph. Owns LLM call
+  orchestration and agent/graph logic. A separate deployable service, not a library
+  imported into the API service.
 - Data pipeline: AWS (S3 + EventBridge + Lambda + Step Functions + DynamoDB)
 - Sandbox: Judge0 (self-hosted)
 
+The two services communicate only through an explicit, documented interface (e.g.
+HTTP/REST) — never a shared DB connection, in-process call, or filesystem state.
+
 ## LLM calls (current stage)
-Call the provider SDK directly (OpenAI / Bedrock) — no need to route through any gateway.
-We will eventually migrate to the Agent Forge gateway for unified routing and budget
-management, but this is not strongly enforced at the current stage — get the business
-logic working first; migrating to the gateway is a separate, independent refactor for later.
+Made from the Python agent orchestration service, calling the provider SDK directly
+(OpenAI / Bedrock) — no need to route through any gateway. We will eventually migrate to
+the Agent Forge gateway for unified routing and budget management, but this is not
+strongly enforced at the current stage — get the business logic working first; migrating
+to the gateway is a separate, independent refactor for later.
 
 ## Code style
-- ES modules (import/export), no CommonJS
-- Use Zod for runtime validation; LLM structured output must have a corresponding Zod schema
+- API/persistence service (TypeScript): ES modules (import/export), no CommonJS
+- Agent orchestration service (Python): use Pydantic models for runtime validation; LLM
+  structured output must have a corresponding Pydantic schema. Structured data crossing
+  back into the TypeScript service must have a corresponding Zod schema on that side.
 
 ## Testing
 - A new feature isn't done until it has corresponding tests
-- Test LangGraph nodes individually, mocking out the LLM call — do not hit real APIs in unit tests
+- Test LangGraph nodes individually with pytest, mocking out the LLM call — do not hit
+  real APIs in unit tests
 - For tests covering new logic, prefer requesting an independent review from the test-reviewer subagent (to avoid the implementer writing tests and grading their own work)
 
 ## Workflow
@@ -35,7 +47,7 @@ Full policy lives in `.specify/memory/constitution.md` (Development Workflow sec
 
 **Default (most work)**: `Explore → Short Plan → Implement → Typecheck/Lint/Test → PR`. No Spec Kit artifacts required.
 
-**Full SDD (only for)**: database schema changes, LangGraph topology changes, RAG/retrieval architecture, AWS resource changes, or Judge0 security-boundary changes.
+**Full SDD (only for)**: database schema changes, LangGraph topology changes, RAG/retrieval architecture, AWS resource changes, Judge0 security-boundary changes, or changes to the service boundary/contract between the NestJS API service and the Python agent orchestration service.
   `/speckit-specify → /speckit-plan → /speckit-tasks → /speckit-implement`
 - `/speckit-specify` creates the feature branch + the feature's one Jira Story.
 - `/speckit-plan` generates spec.md/plan.md/tasks.md by default; research.md, data-model.md, contracts/, quickstart.md only when genuinely needed — skipping them is the normal case, not a shortcut.

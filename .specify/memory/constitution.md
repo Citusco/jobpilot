@@ -1,63 +1,67 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 1.1.0
-Rationale: MINOR — materially expands/refines existing guidance without
-removing or redefining a principle. The process was found too heavy in
-practice (duplicated tracking across Jira, Git, and Spec Kit at per-task
-granularity); this amendment collapses that to feature-level tracking and
-introduces a two-tier workflow (lightweight default vs. full SDD for
-structural changes), which Principle III already gestured at but did not
-fully specify.
+Version change: 1.1.0 → 2.0.0
+Rationale: MAJOR — Principle IV (Locked Technology Stack) is redefined, not
+just expanded: the backend moves from a single Node.js/Fastify service to a
+two-service split (Node.js/NestJS/Prisma for API + persistence, Python/
+FastAPI/LangGraph for agent orchestration). This is a backward-incompatible
+change to the approved stack and the project's structural shape, driven by a
+new requirement to separate the API/persistence surface from the AI
+orchestration surface so each can use the runtime best suited to it.
 
 Modified principles:
-  - III. Plan-Before-Build for Structural Changes — trigger list now
-    explicitly names RAG/retrieval architecture and Judge0 sandbox security
-    boundaries alongside the existing DB schema / LangGraph topology / cloud
-    infrastructure triggers, so the boundary of "needs full SDD" is
-    unambiguous.
-  - V. Definition of Done: Typed, Tested, Reviewed — expanded to explicitly
-    list acceptance-criteria satisfaction, design-decision documentation, PR
-    completion, and Jira Story update as done-criteria (previously implied
-    but not enumerated).
+  - I. Schema-Validated LLM I/O (NON-NEGOTIABLE) — validation requirement
+    now specified per language: Pydantic models in the Python agent
+    orchestration service, Zod schemas for structured data crossing back
+    into the TypeScript API service. Previously assumed a single
+    TypeScript/Zod codebase.
+  - II. Independently Testable LangGraph Nodes — now explicitly scoped to
+    the Python agent orchestration service, with pytest (not a JS test
+    runner) as the required test tool and mocking mechanism named.
+  - III. Plan-Before-Build for Structural Changes — trigger list gains a
+    new entry: changes to the service boundary/contract between the NestJS
+    API service and the Python agent orchestration service (or introduction
+    of additional services). LangGraph topology trigger reworded to locate
+    the graph in the Python service.
+  - IV. Locked Technology Stack — redefined from a single-service Node.js/
+    Fastify/LangGraph.js stack to a two-service split: NestJS + Prisma
+    (API/persistence, Node.js/TypeScript) and FastAPI + LangGraph
+    (agent orchestration, Python), connected by an explicit documented
+    interface. Data pipeline (AWS) and sandbox (Judge0) are unchanged.
+  - V. Definition of Done: Typed, Tested, Reviewed — the "ES modules, no
+    CommonJS" rule is now scoped explicitly to the TypeScript/NestJS
+    service, since the codebase is no longer single-language.
 
-Added sections: none new — "Development Workflow" section rewritten in place.
+Added sections: none new — modified principles rewritten in place.
 
 Removed sections: none.
 
-Rewritten sections:
-  - Development Workflow (Spec-Driven Development) — replaced the flat
-    "always run the core loop for big changes" description with: (1) one
-    feature = one Jira Story = one feature branch = one PR, (2) Jira sync
-    only at feature start/finish, not per task, (3) tasks.md checklist items
-    are internal only — no per-task Jira subtasks/branches/PRs, (4) default
-    workflow is Explore → Short Plan → Implement → Typecheck/Lint/Test → PR,
-    (5) full SDD (`/speckit-specify` → `/speckit-plan` → `/speckit-tasks` →
-    `/speckit-implement`) reserved for Principle III triggers, (6)
-    `/speckit-clarify`, `/speckit-analyze`, `/speckit-converge` are optional
-    on-demand tools, not part of either default path, (7) `/speckit-checklist`
-    and `/speckit-taskstoissues` are excluded from the default workflow
-    entirely, (8) default artifact set per feature is spec.md + plan.md +
-    tasks.md only — research.md/data-model.md/quickstart.md/openapi.yaml
-    generated only when the feature genuinely needs them.
-
 Templates requiring updates:
   - .specify/templates/plan-template.md ✅ no change needed (Constitution
-    Check gate is generic/dynamic)
-  - .specify/templates/spec-template.md ✅ no change needed
-  - .specify/templates/tasks-template.md ✅ no change needed (no Jira
-    references in the template itself; the per-task Jira mapping that
-    appeared in specs/001-jd-training-directions/tasks.md was ad hoc, not
-    template-driven, and has been annotated as historical)
-  - .claude/skills/speckit-implement/SKILL.md ⚠️ updated — replaced
-    per-task Jira/branch requirements with feature-level equivalents
-  - .claude/skills/speckit-specify/SKILL.md ⚠️ updated — added Jira Story
-    creation at feature start
-  - .claude/skills/speckit-plan/SKILL.md ⚠️ updated — research.md/
-    data-model.md/contracts/quickstart.md generation now conditional
+    Check gate and Project Structure options are generic/dynamic; the
+    existing "Option 2: Web application" pattern already accommodates a
+    multi-service backend/frontend-style split, and /speckit-plan is
+    expected to describe the NestJS/Python split concretely per feature)
+  - .specify/templates/spec-template.md ✅ no change needed (technology-
+    agnostic by design)
+  - .specify/templates/tasks-template.md ✅ no change needed (path
+    conventions are illustrative and adjusted per plan.md at generation
+    time, no stack-specific references)
+  - .claude/skills/speckit-plan, speckit-specify, speckit-implement, and
+    other speckit-* skills ✅ checked — no hardcoded Fastify/Drizzle/
+    LangGraph.js references found; nothing to update
   - CLAUDE.md ⚠️ updated to match (see this file's Governance section)
+  - specs/001-jd-training-directions/* — intentionally NOT updated; these
+    are historical artifacts of a feature built under the prior stack and
+    document decisions made at that time, not current guidance
 
 Follow-up TODOs: none — no placeholders were deferred.
+
+Deferred non-governance intents (see Next Actions in the command output):
+  - Splitting the actual stack migration into two Full-SDD features (NestJS
+    + Prisma API migration, replacing SCRUM-3's already-merged Drizzle
+    schema; Python FastAPI agent orchestration extraction)
 -->
 
 # JobPilot Constitution
@@ -66,21 +70,30 @@ Follow-up TODOs: none — no placeholders were deferred.
 
 ### I. Schema-Validated LLM I/O (NON-NEGOTIABLE)
 
-All LLM calls that return structured output MUST have a corresponding Zod
-schema, and the response MUST be parsed/validated through that schema before
-it is used anywhere downstream. Raw, unvalidated LLM output MUST NOT be
-passed into application logic, persisted, or forwarded to another node.
+All LLM calls that return structured output MUST have a corresponding schema
+validated at the language boundary where the call is made, and the response
+MUST be parsed/validated through that schema before it is used anywhere
+downstream:
+
+- In the Python agent orchestration service: a Pydantic model.
+- In the TypeScript API service: a Zod schema, for any structured data that
+  crosses the service boundary back from the agent orchestration service or
+  is otherwise produced/consumed there.
+
+Raw, unvalidated LLM output MUST NOT be passed into application logic,
+persisted, or forwarded to another node or across the service boundary.
 
 **Rationale**: LLM output shape is not guaranteed by static typing alone —
 providers can drift, prompts can be edited without updating call sites, and
 malformed output must fail loudly at the boundary rather than corrupt state
-further downstream.
+further downstream. This holds regardless of which language made the call.
 
 ### II. Independently Testable LangGraph Nodes
 
-Every LangGraph node MUST be unit-testable in isolation from the rest of the
-graph. Tests for node logic MUST mock the LLM call; unit tests MUST NOT make
-real API calls to any LLM provider.
+Every LangGraph node, implemented in the Python agent orchestration service,
+MUST be unit-testable in isolation from the rest of the graph using pytest.
+Tests for node logic MUST mock the LLM call (e.g., via `unittest.mock` or
+`pytest-mock`); unit tests MUST NOT make real API calls to any LLM provider.
 
 **Rationale**: Real API calls make tests slow, flaky, non-deterministic, and
 costly to run in CI. Mocking the LLM boundary keeps node logic (routing,
@@ -94,12 +107,16 @@ Spec-Driven Development flow — `/speckit-specify` → `/speckit-plan` →
 Jumping straight to code for these categories of change is NOT permitted:
 
 - Database schema (new tables, columns, or relationships)
-- LangGraph state graph topology (new nodes, edges, or state shape changes)
+- LangGraph state graph topology, in the Python agent orchestration service
+  (new nodes, edges, or state shape changes)
 - RAG/retrieval architecture (pgvector index design, chunking strategy,
   retrieval/ranking approach)
 - Cloud infrastructure (S3, EventBridge, Lambda, Step Functions, DynamoDB)
 - Judge0 sandbox security boundaries (execution isolation, resource limits,
   network access controls)
+- Service boundary or cross-language interface changes (new or modified
+  contract between the NestJS API service and the Python agent
+  orchestration service, or introduction of an additional service)
 
 Everything else uses the lightweight default workflow (see Development
 Workflow below) — routing a change through the full SDD flow when it isn't
@@ -111,21 +128,44 @@ from upfront design review far more than they cost in process overhead.
 
 ### IV. Locked Technology Stack
 
-The approved stack is: Node.js + TypeScript + Fastify (backend); LangGraph.js
-(orchestration); pgvector on Postgres (vector store); AWS S3 + EventBridge +
-Lambda + Step Functions + DynamoDB (data pipeline); self-hosted Judge0
-(sandbox). LLM providers are called directly via their SDKs (OpenAI /
-Bedrock) — no gateway indirection is required at this stage; routing through
-a unified gateway (Agent Forge) is an explicitly deferred, independent future
-migration, not a current requirement.
+The approved stack is split across two services with an explicit boundary
+between them:
+
+- **API & persistence service** — Node.js + TypeScript + NestJS, with
+  Prisma as the ORM/migration tool for Postgres (including pgvector as the
+  vector store on the same Postgres instance). Owns the public API surface,
+  request/response contracts, and all persistent storage.
+- **Agent orchestration service** — Python + FastAPI + LangGraph. Owns LLM
+  call orchestration and agent/graph logic. This is a separate deployable
+  service, not a library imported into the API service.
+- **Data pipeline** (unchanged): AWS S3 + EventBridge + Lambda + Step
+  Functions + DynamoDB.
+- **Sandbox** (unchanged): self-hosted Judge0.
+
+LLM providers are called directly via their SDKs (OpenAI / Bedrock) from the
+agent orchestration service — no gateway indirection is required at this
+stage; routing through a unified gateway (Agent Forge) is an explicitly
+deferred, independent future migration, not a current requirement.
+
+Communication between the two services MUST go through an explicit,
+documented interface (e.g., an HTTP/REST contract). The services MUST NOT
+share a database connection, in-process function call, or filesystem state
+as an implicit coupling mechanism — the service boundary MUST be a
+first-class, designed interface, not something discovered ad hoc.
 
 Introducing any library, service, or provider outside this list requires
 discussion and explicit agreement before it is used — it MUST NOT be added
 silently as part of an unrelated feature.
 
-**Rationale**: A locked stack keeps an early-stage project coherent and
-prevents dependency sprawl and premature abstraction (e.g., gateway
-indirection) before the underlying business logic has proven itself.
+**Rationale**: A locked stack keeps the project coherent and prevents
+dependency sprawl and premature abstraction before the underlying business
+logic has proven itself. Splitting API/persistence from agent orchestration
+lets each side use the runtime best suited to its job — NestJS's structured
+API conventions and Prisma's schema tooling for the request/persistence
+surface, Python's native LangGraph ecosystem for the agent surface — at the
+cost of an explicit service boundary that must be deliberately designed,
+which is why Principle III now treats changes to that boundary as a
+structural change requiring full SDD.
 
 ### V. Definition of Done: Typed, Tested, Reviewed
 
@@ -141,8 +181,8 @@ A feature is done only when ALL of the following hold:
 - The PR is completed (opened, and — for full-SDD features — reviewed)
 - The feature's Jira Story is updated to reflect current status
 
-Code MUST use ES modules (`import`/`export`); CommonJS MUST NOT be
-introduced. Tests covering new logic SHOULD be reviewed by the
+Code in the TypeScript/NestJS service MUST use ES modules (`import`/
+`export`); CommonJS MUST NOT be introduced. Tests covering new logic SHOULD be reviewed by the
 `test-reviewer` subagent independently of the implementer, rather than
 self-graded by whoever wrote the implementation.
 
@@ -235,4 +275,4 @@ begins, and MUST be re-checked after Phase 1 design. Any violation MUST be
 justified in that plan's Complexity Tracking table or the simpler
 alternative MUST be adopted instead.
 
-**Version**: 1.1.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-07-27
+**Version**: 2.0.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-01
