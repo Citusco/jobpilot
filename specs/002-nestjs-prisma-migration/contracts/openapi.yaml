@@ -1,0 +1,33 @@
+openapi: 3.0.3
+info:
+  title: JobPilot - API/Persistence Service (NestJS + Prisma foundation)
+  version: "0.1.0"
+  description: >
+    Corresponds to specs/002-nestjs-prisma-migration. This feature stands up the NestJS +
+    Prisma foundation only; the single endpoint in scope is a health check confirming the
+    service is running. Business endpoints (JD submission intake, training-direction
+    generation) are out of scope and will be specified in future features.
+
+paths:
+  /health:
+    get:
+      summary: Confirm the API service is running
+      operationId: getHealth
+      responses:
+        '200':
+          description: The service is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: ["ok"]
