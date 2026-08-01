@@ -70,12 +70,12 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, `prisma/` at 
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T006 [P] [US2] Write a unit test for `PrismaService`'s connection lifecycle (`onModuleInit`/`onModuleDestroy`) in `tests/unit/prisma/prisma.service.test.ts`
+- [X] T006 [P] [US2] Write a unit test for `PrismaService`'s connection lifecycle (`onModuleInit`/`onModuleDestroy`) in `tests/unit/prisma/prisma.service.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T007 [US2] Define the Prisma schema for `JdSubmission` and `CandidateTrainingDirection` in `prisma/schema.prisma` per data-model.md's field/constraint tables, generate the migration with `npx prisma migrate dev`, and hand-add the two CHECK constraints (`jd_submissions_status_check`, `candidate_training_directions_question_count_check`) to the generated migration SQL (depends on T002)
-- [ ] T008 [US2] Implement `PrismaModule` + `PrismaService` (extends `PrismaClient`, wired to NestJS's module lifecycle) in `src/prisma/prisma.module.ts` and `src/prisma/prisma.service.ts`, and register `PrismaModule` in `src/app.module.ts` (depends on T003; must satisfy T006)
+- [X] T007 [US2] Define the Prisma schema for `JdSubmission` and `CandidateTrainingDirection` in `prisma/schema.prisma` per data-model.md's field/constraint tables, generate the migration with `npx prisma migrate dev`, and hand-add the two CHECK constraints (`jd_submissions_status_check`, `candidate_training_directions_question_count_check`) to the generated migration SQL (depends on T002)
+- [X] T008 [US2] Implement `PrismaModule` + `PrismaService` (extends `PrismaClient`, wired to NestJS's module lifecycle) in `src/prisma/prisma.module.ts` and `src/prisma/prisma.service.ts`, and register `PrismaModule` in `src/app.module.ts` (depends on T003; must satisfy T006)
 
 **Checkpoint**: User Story 2 is independently testable — `npx prisma migrate dev` against a fresh DB, verified per quickstart.md §1.
 

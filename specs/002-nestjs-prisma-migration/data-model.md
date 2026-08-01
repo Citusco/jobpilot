@@ -43,7 +43,7 @@ Table name pinned with `@@map("candidate_training_directions")`.
 same as the existing foreign key
 (`candidate_training_directions_jd_submission_id_jd_submissions_id_fk`).
 
-## CHECK constraints via Prisma migration SQL
+## CHECK constraints and array NOT NULL via hand-edited migration SQL
 
 Prisma's schema DSL has no first-class `CHECK` constraint syntax. `prisma migrate dev`
 generates a SQL migration file from the schema; the two existing CHECK constraints
@@ -52,6 +52,17 @@ added to that generated migration file by hand, with the same names and conditio
 current Drizzle migration, before it's applied. This is a one-time manual edit per
 migration generation, not an ongoing maintenance burden — Prisma migrations that don't
 change these two columns won't need to touch this block again.
+
+**Second, related caveat found while implementing**: Prisma never emits `NOT NULL` on a
+Postgres array (`String[]`) column, even when the corresponding Prisma field is required
+(no `?`) — confirmed via `prisma migrate diff --from-empty --to-schema-datamodel` against
+this schema, which produced `"tags" TEXT[]` with no `NOT NULL`, unlike the original
+Drizzle column (`text('tags').array().notNull()`). `CandidateTrainingDirection.tags` is
+required data per FR-007/data-model.md, so its migration's `NOT NULL` is also hand-added,
+the same way the CHECK constraints are — Prisma's own tooling won't regenerate it if the
+migration is ever recreated from scratch. `JdSubmission.techStack` needs no such fix: it
+was nullable in the original schema too, so Prisma's default (no `NOT NULL`) already
+matches.
 
 ## State transitions
 

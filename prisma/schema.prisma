@@ -15,3 +15,33 @@ datasource db {
   url        = env("DATABASE_URL")
   extensions = [vector]
 }
+
+model JdSubmission {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rawText           String   @map("raw_text")
+  role              String?
+  techStack         String[] @map("tech_stack")
+  seniority         String?
+  seniorityInferred Boolean  @default(false) @map("seniority_inferred")
+  status            String
+  rejectionReason   String?  @map("rejection_reason")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  candidateTrainingDirections CandidateTrainingDirection[]
+
+  @@map("jd_submissions")
+}
+
+model CandidateTrainingDirection {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jdSubmissionId         String   @map("jd_submission_id") @db.Uuid
+  name                   String
+  rationale              String
+  tags                   String[]
+  suggestedQuestionCount Int      @map("suggested_question_count")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  jdSubmission JdSubmission @relation(fields: [jdSubmissionId], references: [id], onDelete: Cascade)
+
+  @@map("candidate_training_directions")
+}
