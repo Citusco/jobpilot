@@ -36,7 +36,7 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, `prisma/` at 
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 Create the NestJS bootstrap: `src/main.ts` (`NestFactory.create` with the Express platform adapter, `listen()`) and an empty root `src/app.module.ts` (depends on T001)
+- [X] T003 Create the NestJS bootstrap: `src/main.ts` (`NestFactory.create` with the Express platform adapter, `listen()`) and an empty root `src/app.module.ts` (depends on T001)
 
 **Checkpoint**: Foundation ready — User Story 1 and User Story 2 can now proceed in parallel with each other (neither depends on the other; both only need T003)
 
@@ -52,11 +52,11 @@ Single project (per plan.md Structure Decision): `src/`, `tests/`, `prisma/` at 
 
 > Write these tests FIRST; confirm they FAIL before the corresponding implementation task.
 
-- [ ] T004 [P] [US1] Write tests for the health endpoint: unit test for `HealthController` in `tests/unit/health/health.controller.test.ts`, and a contract test for `GET /health` against `contracts/openapi.yaml` in `tests/contract/health.contract.test.ts`
+- [X] T004 [P] [US1] Write tests for the health endpoint: unit test for `HealthController` in `tests/unit/health/health.controller.test.ts`, and a contract test for `GET /health` against `contracts/openapi.yaml` in `tests/contract/health.contract.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] Implement `HealthModule` + `HealthController` (`GET /health` → `{"status":"ok"}`) in `src/health/health.module.ts` and `src/health/health.controller.ts`, and register `HealthModule` in `src/app.module.ts` (depends on T003; must satisfy T004)
+- [X] T005 [US1] Implement `HealthModule` + `HealthController` (`GET /health` → `{"status":"ok"}`) in `src/health/health.module.ts` and `src/health/health.controller.ts`, and register `HealthModule` in `src/app.module.ts` (depends on T003; must satisfy T004)
 
 **Checkpoint**: User Story 1 is independently testable — `npm run dev` + `curl localhost:3000/health` per quickstart.md §2.
 
