@@ -89,8 +89,9 @@ describe('POST /jd-submissions (contract)', () => {
     });
   });
 
-  it('returns 422 with the rejected shape when the agent service reports insufficient info', async () => {
+  it('returns 422 with the rejected shape when the agent service reports insufficient info, and persists the rejection', async () => {
     agentClientMock.extract.mockResolvedValue({ sufficient: false, reason: 'JD text is too short' });
+    prismaMock.jdSubmission.create.mockResolvedValue({} as CreatedSubmission);
 
     const response = await request(app.getHttpServer() as Parameters<typeof request>[0])
       .post('/jd-submissions')
@@ -98,12 +99,25 @@ describe('POST /jd-submissions (contract)', () => {
 
     expect(response.status).toBe(422);
     expect(response.body).toMatchObject({ status: 'rejected', reason: 'JD text is too short' });
+    expect(prismaMock.jdSubmission.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'rejected' }) }),
+    );
   });
 
-  it('returns 400 without calling the agent service when the body is invalid', async () => {
+  it('returns 400 without calling the agent service when the body is missing text', async () => {
     const response = await request(app.getHttpServer() as Parameters<typeof request>[0])
       .post('/jd-submissions')
       .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ message: expect.any(String) });
+    expect(agentClientMock.extract).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 without calling the agent service when text is an empty string', async () => {
+    const response = await request(app.getHttpServer() as Parameters<typeof request>[0])
+      .post('/jd-submissions')
+      .send({ text: '' });
 
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({ message: expect.any(String) });

@@ -15,7 +15,7 @@ describe('AgentOrchestrationClient', () => {
     jest.useRealTimers();
   });
 
-  it('returns the validated response on a successful call', async () => {
+  it('returns the validated response on a successful insufficient-info call', async () => {
     const body = { sufficient: false, reason: 'not enough information' };
     globalThis.fetch = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,
@@ -31,6 +31,24 @@ describe('AgentOrchestrationClient', () => {
       expect.stringContaining('/extract'),
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+
+  it('returns the validated response on a successful sufficient-info call, including nested extraction/directions', async () => {
+    const body = {
+      sufficient: true,
+      extraction: { role: 'Backend Engineer', techStack: ['Node.js'], seniority: 'Senior', seniorityInferred: false },
+      directions: [{ name: 'API design', rationale: 'quoted from JD', tags: ['api'], suggestedQuestionCount: 3 }],
+    };
+    globalThis.fetch = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(body),
+    } as unknown as Response);
+
+    const client = new AgentOrchestrationClient();
+    const result = await client.extract('a real JD text');
+
+    expect(result).toEqual(body);
   });
 
   it('throws AgentOrchestrationUnavailableError on network failure', async () => {
