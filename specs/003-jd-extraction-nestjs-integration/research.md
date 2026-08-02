@@ -85,3 +85,32 @@ service.
   permanent product behavior (it must also work correctly *after* the service exists and
   has a bad day), not a temporary workaround, so it needs real test coverage regardless
   of current deployment status.
+
+## 5. Real bug found during quickstart verification (T007): `tsx` doesn't emit decorator metadata
+
+**Finding**: All 17 automated tests passed, but the first manual `quickstart.md` run
+against the real dev server returned `500` instead of `502` on the upstream-failure
+path. `JdSubmissionsController`'s injected `JdSubmissionsService` was `undefined` at
+request time. Root cause: `tsx` (specs/002's chosen dev runner, research.md §1 there)
+runs on esbuild, which never implements TypeScript's `emitDecoratorMetadata` — a
+deliberate esbuild scope limitation, not something any tsconfig flag can fix. NestJS's
+type-based DI had no metadata to resolve `JdSubmissionsService` against, and silently
+injected `undefined` rather than failing loudly at startup. `ts-jest` (used by every
+automated test) transpiles with the real TypeScript compiler and emits this metadata
+correctly, which is why the entire test suite — including the `AppModule`-level contract
+test — passed regardless. This bug traces back to specs/002, which never happened to
+exercise a class with a real constructor-injected dependency (`HealthController` and
+`PrismaService` both take zero).
+
+**Fix**: `npm run dev` now runs `node --watch --import ./scripts/register-ts-node.mjs
+src/main.ts` — `ts-node`'s ESM loader (real `tsc`-backed), registered via Node's
+non-deprecated `register()` API rather than the deprecated `--experimental-loader` flag.
+`tsx` removed from `package.json` entirely. Re-verified against the real dev server:
+correct status codes on all paths, zero rows persisted on upstream failure, and
+`node --watch`'s restart-on-change behavior confirmed working.
+
+**Why this belongs in research.md and not just a bug-fix commit**: it's a real design
+decision correction (specs/002 research.md §1's `tsx` choice, now marked superseded
+there) discovered specifically *because* this feature was the first to genuinely exercise
+NestJS dependency injection — worth recording as a decision, not just a diff. Full
+writeup in the Obsidian vault: `jobpilot-nestjs-esm-tooling-pitfalls.md`.

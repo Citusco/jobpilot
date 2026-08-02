@@ -2,12 +2,29 @@
 
 ## 1. NestJS under ESM with decorator metadata
 
-**Decision**: Run NestJS as ESM, using `tsx` as the dev runner (already the project's
-`npm run dev` tool) with an ESM entry point (`src/main.ts`), and add
-`"experimentalDecorators": true` and `"emitDecoratorMetadata": true` to `tsconfig.json`
-(neither is currently set). Keep `module`/`moduleResolution` as `NodeNext` and continue
-using explicit `.js` extensions on relative imports, matching the existing convention
-already visible in `src/db/client.ts` (`from './schema.js'`).
+> [!IMPORTANT] **Superseded, 2026-08-02 (SCRUM-39)**: The `tsx` decision below turned out
+> to be wrong for any class with an actual constructor-injected dependency. `tsx` runs on
+> esbuild, which does **not** implement TypeScript's `emitDecoratorMetadata` at all — no
+> flag or config fixes this, it's a deliberate esbuild scope limitation. Setting the two
+> compiler options was necessary but not sufficient: `tsc --noEmit` stayed green (it
+> doesn't care what the runtime transpiler does), and `ts-jest` (which uses real `tsc`)
+> masked the gap in every test, so this only surfaced when SCRUM-39 added the project's
+> first NestJS classes with real constructor dependencies (`JdSubmissionsController`,
+> `JdSubmissionsService`) and DI silently injected `undefined` at runtime — no startup
+> error, just a `TypeError` on the first real request. `HealthController`/`PrismaService`
+> both happen to take zero constructor-injected parameters, so this feature never
+> exercised the broken path. Fixed by switching `npm run dev` to
+> `node --watch --import ./scripts/register-ts-node.mjs src/main.ts` (`ts-node`'s ESM
+> loader, which uses real `tsc` and correctly emits `design:paramtypes`); `tsx` was
+> removed from `package.json` entirely. See
+> `jobpilot-nestjs-esm-tooling-pitfalls.md` in the Obsidian vault for the full writeup.
+
+**Decision** (original, now superseded above): Run NestJS as ESM, using `tsx` as the dev
+runner (already the project's `npm run dev` tool) with an ESM entry point
+(`src/main.ts`), and add `"experimentalDecorators": true` and `"emitDecoratorMetadata":
+true` to `tsconfig.json` (neither is currently set). Keep `module`/`moduleResolution` as
+`NodeNext` and continue using explicit `.js` extensions on relative imports, matching the
+existing convention already visible in `src/db/client.ts` (`from './schema.js'`).
 
 **Rationale**: Constitution Principle V and CLAUDE.md both mandate ES modules with no
 CommonJS across the TypeScript service — this predates the stack pivot and isn't up for
