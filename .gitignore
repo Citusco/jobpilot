@@ -143,3 +143,26 @@ vite.config.ts.timestamp-*
 .vite/
 
 /src/generated/prisma
+
+# Python (agent-service/)
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+# uv.lock and .python-version ARE committed (reproducibility, same reasoning as
+# package-lock.json) - not listed here on purpose
+
+# AI tooling scaffolding - kept locally for the dev workflow, not tracked in git.
+# .specify/memory/constitution.md is the one intentional exception (kept tracked -
+# governance/principles doc, not scaffolding).
+.claude/
+CLAUDE.md
+.specify/*
+!.specify/memory
+.specify/memory/*
+!.specify/memory/constitution.md
+specs/*/tasks.md
+specs/*/checklists/

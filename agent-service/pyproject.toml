@@ -1,0 +1,48 @@
+[project]
+name = "agent-service"
+version = "0.1.0"
+description = "JobPilot agent orchestration service: FastAPI + LangGraph + LangChain"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]>=0.30",
+    "langgraph==1.2.10",
+    "langchain-core==1.5.3",
+    "langchain-openai==1.4.1",
+    "langsmith==0.10.15",
+    "boto3==1.43.62",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "boto3-stubs[secretsmanager]>=1.43",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_service"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
