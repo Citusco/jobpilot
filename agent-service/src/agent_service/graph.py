@@ -15,6 +15,7 @@ about the two distinct terminal states.
 
 from typing import Any
 
+from langchain_core.runnables import Runnable
 from langgraph.graph import END, START, StateGraph
 
 from agent_service.llm import build_chat_model
@@ -26,19 +27,13 @@ def _route_on_sufficient(state: GraphState) -> str:
     return "generate_candidate_directions" if state.sufficient else "reject_input"
 
 
-def build_graph() -> Any:
-    """Returns a CompiledStateGraph. Typed as Any: LangGraph's CompiledStateGraph generic
-    signature is verbose/internal-shaped and pinning it precisely here would be fragile
-    against library upgrades for no real type-safety benefit at this module boundary -
-    callers only ever call .invoke(dict) -> dict on it (see main.py's get_graph)."""
-    model = build_chat_model()
-    extract_structured = model.with_structured_output(
-        ExtractionLLMOutput, method="json_schema", include_raw=True
-    )
-    directions_structured = model.with_structured_output(
-        DirectionsLLMOutput, method="json_schema", include_raw=True
-    )
-
+def _wire_graph(
+    extract_structured: Runnable[Any, Any], directions_structured: Runnable[Any, Any]
+) -> Any:
+    """Builds and compiles the StateGraph from two already-structured-output-bound
+    Runnables. Split out from build_graph() so tests can exercise the real conditional
+    edge routing (FR-004) with fake Runnables, without needing a real ChatOpenAI client
+    (which requires a real OPENAI_API_KEY to construct) - see tests/unit/test_graph.py."""
     graph = StateGraph(GraphState)
     # mypy can't structurally match a closure returned from a factory function against
     # LangGraph's add_node overloads (a plain top-level function like reject_input below
@@ -63,3 +58,18 @@ def build_graph() -> Any:
     graph.add_edge("reject_input", END)
 
     return graph.compile()
+
+
+def build_graph() -> Any:
+    """Returns a CompiledStateGraph. Typed as Any: LangGraph's CompiledStateGraph generic
+    signature is verbose/internal-shaped and pinning it precisely here would be fragile
+    against library upgrades for no real type-safety benefit at this module boundary -
+    callers only ever call .invoke(dict) -> dict on it (see main.py's get_graph)."""
+    model = build_chat_model()
+    extract_structured = model.with_structured_output(
+        ExtractionLLMOutput, method="json_schema", include_raw=True
+    )
+    directions_structured = model.with_structured_output(
+        DirectionsLLMOutput, method="json_schema", include_raw=True
+    )
+    return _wire_graph(extract_structured, directions_structured)

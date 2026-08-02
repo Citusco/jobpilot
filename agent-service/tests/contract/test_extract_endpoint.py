@@ -85,28 +85,34 @@ def test_insufficient_returns_200_with_reason():
     assert response.json() == {"sufficient": False, "reason": "JD text is too short"}
 
 
+class _TrackingGraph(_FakeGraph):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.invoked = False
+
+    def invoke(self, _input):
+        self.invoked = True
+        return super().invoke(_input)
+
+
 def test_missing_text_returns_422_without_invoking_graph():
-    invoked = {"called": False}
-
-    class _TrackingGraph(_FakeGraph):
-        def invoke(self, _input):
-            invoked["called"] = True
-            return super().invoke(_input)
-
-    app.dependency_overrides[get_graph] = lambda: _TrackingGraph(result={})
+    graph = _TrackingGraph(result={})
+    app.dependency_overrides[get_graph] = lambda: graph
 
     response = client.post("/extract", json={})
 
     assert response.status_code == 422
-    assert invoked["called"] is False
+    assert graph.invoked is False
 
 
 def test_empty_text_returns_422_without_invoking_graph():
-    app.dependency_overrides[get_graph] = lambda: _FakeGraph(result={})
+    graph = _TrackingGraph(result={})
+    app.dependency_overrides[get_graph] = lambda: graph
 
     response = client.post("/extract", json={"text": ""})
 
     assert response.status_code == 422
+    assert graph.invoked is False
 
 
 def test_llm_failure_returns_502():

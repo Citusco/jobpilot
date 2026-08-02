@@ -1,4 +1,5 @@
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,9 +8,22 @@ from agent_service.secrets import SecretLoadError, load_secrets_into_env
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clean_env(monkeypatch: pytest.MonkeyPatch):
+    # load_secrets_into_env() writes to os.environ directly (not via monkeypatch.setenv),
+    # so monkeypatch's own automatic teardown doesn't know to undo it - clean up
+    # explicitly both before and after each test, or a key set by one test leaks into
+    # every test that runs after it in the same session.
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    yield
+    # Plain os.environ.pop here, NOT monkeypatch.delenv: if a value was set by
+    # load_secrets_into_env() (bypassing monkeypatch entirely), calling
+    # monkeypatch.delenv on it here would make monkeypatch record *this* deletion as an
+    # undo-able action and restore the leaked value right back when monkeypatch's own
+    # fixture teardown runs afterward (it tears down after _clean_env, since _clean_env
+    # depends on it - LIFO order). A plain pop leaves nothing for monkeypatch to "undo".
+    os.environ.pop("OPENAI_API_KEY", None)
+    os.environ.pop("LANGCHAIN_API_KEY", None)
 
 
 def test_skips_fetch_when_openai_api_key_already_set(monkeypatch: pytest.MonkeyPatch) -> None:

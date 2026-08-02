@@ -72,7 +72,10 @@ def make_extract_node(
     chain = _EXTRACT_PROMPT | structured_model
 
     def extract_jd_structure(state: GraphState) -> dict[str, Any]:
-        result = chain.invoke({"jd_text": state.jd_text})
+        try:
+            result = chain.invoke({"jd_text": state.jd_text})
+        except Exception as exc:  # noqa: BLE001 - re-raised as AgentLLMError below
+            raise AgentLLMError(f"extract_jd_structure: LLM call failed: {exc}") from exc
         parsed = result.get("parsed")
         if parsed is None:
             raise AgentLLMError(
@@ -82,7 +85,10 @@ def make_extract_node(
         # Explicit re-validation before writing to state (research.md #3): LangGraph
         # validates state on node *input*, not on what a node *returns* before merging -
         # this guards that gap, it is not distrust of with_structured_output itself.
-        validated = ExtractionLLMOutput.model_validate(parsed.model_dump())
+        try:
+            validated = ExtractionLLMOutput.model_validate(parsed.model_dump())
+        except Exception as exc:  # noqa: BLE001 - re-raised as AgentLLMError below
+            raise AgentLLMError(f"extract_jd_structure: re-validation failed: {exc}") from exc
         return {
             "sufficient": validated.sufficient,
             "insufficient_reason": validated.insufficient_reason,
@@ -101,21 +107,29 @@ def make_generate_directions_node(
     chain = _GENERATE_DIRECTIONS_PROMPT | structured_model
 
     def generate_candidate_directions(state: GraphState) -> dict[str, Any]:
-        result = chain.invoke(
-            {
-                "role": state.role,
-                "tech_stack": state.tech_stack,
-                "seniority": state.seniority,
-                "jd_text": state.jd_text,
-            }
-        )
+        try:
+            result = chain.invoke(
+                {
+                    "role": state.role,
+                    "tech_stack": state.tech_stack,
+                    "seniority": state.seniority,
+                    "jd_text": state.jd_text,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised as AgentLLMError below
+            raise AgentLLMError(f"generate_candidate_directions: LLM call failed: {exc}") from exc
         parsed = result.get("parsed")
         if parsed is None:
             raise AgentLLMError(
                 f"generate_candidate_directions: LLM did not return valid structured "
                 f"output: {result.get('parsing_error')}"
             )
-        validated = DirectionsLLMOutput.model_validate(parsed.model_dump())
+        try:
+            validated = DirectionsLLMOutput.model_validate(parsed.model_dump())
+        except Exception as exc:  # noqa: BLE001 - re-raised as AgentLLMError below
+            raise AgentLLMError(
+                f"generate_candidate_directions: re-validation failed: {exc}"
+            ) from exc
         directions: list[DirectionLLMItem] = validated.directions
         return {"directions": directions}
 

@@ -16,15 +16,25 @@ from agent_service.secrets import load_secrets_into_env
 
 app = FastAPI(title="JobPilot Agent Orchestration Service")
 
-# Must run before build_graph() - that's what constructs ChatOpenAI, which reads
-# OPENAI_API_KEY from the environment at construction time.
-load_secrets_into_env()
-_compiled_graph = build_graph()
+_compiled_graph: Any | None = None
 
 
 def get_graph() -> Any:
     """FastAPI dependency for the compiled graph - overridden in tests via
-    app.dependency_overrides (the FastAPI equivalent of NestJS's overrideProvider)."""
+    app.dependency_overrides (the FastAPI equivalent of NestJS's overrideProvider).
+
+    Lazily loads secrets and compiles the graph on first real invocation, rather than at
+    module import time. This keeps `import agent_service.main` (and therefore test
+    collection) free of any real AWS/OpenAI network call - tests replace this whole
+    dependency via dependency_overrides, so this function body never actually runs in
+    the test suite, and production incurs the one-time cost on the first request instead
+    of at process startup."""
+    global _compiled_graph
+    if _compiled_graph is None:
+        # Must run before build_graph() - that's what constructs ChatOpenAI, which reads
+        # OPENAI_API_KEY from the environment at construction time.
+        load_secrets_into_env()
+        _compiled_graph = build_graph()
     return _compiled_graph
 
 

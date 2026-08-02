@@ -11,7 +11,7 @@ LANGCHAIN_TRACING_V2 / LANGCHAIN_API_KEY / LANGCHAIN_PROJECT environment variabl
 
 from langchain_openai import ChatOpenAI
 
-_MODEL = "gpt-4o"
+_MODEL = "gpt-5.6-luna"
 _TIMEOUT_SECONDS = 20
 _MAX_RETRIES = 2
 

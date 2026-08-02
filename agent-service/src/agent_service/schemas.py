@@ -18,9 +18,9 @@ specs/004-python-agent-orchestration/research.md #3 and the architecture plan):
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # --- 1. LLM output schemas (with_structured_output targets) ---
 
@@ -34,6 +34,31 @@ class ExtractionLLMOutput(BaseModel):
     seniority: str | None = None
     seniority_inferred: bool | None = None
     insufficient_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _consistent_with_sufficiency(self) -> Self:
+        # Guards against an LLM response whose fields are inconsistent with its own
+        # `sufficient` flag - without this, either direction reaches main.py as a state
+        # dict that fails to construct the corresponding response model
+        # (Extraction requires role/tech_stack/seniority/seniority_inferred;
+        # ExtractInsufficient requires reason), raising an uncaught
+        # pydantic.ValidationError (a raw 500) instead of the intended
+        # AgentLLMError -> 502 path. Runs both when LangChain first parses the LLM's
+        # JSON into this model, and again in nodes.py's explicit re-validation step -
+        # defense in depth, not redundant (research.md #3).
+        if self.sufficient and (
+            self.role is None
+            or self.tech_stack is None
+            or self.seniority is None
+            or self.seniority_inferred is None
+        ):
+            raise ValueError(
+                "sufficient=True requires role, tech_stack, seniority, and "
+                "seniority_inferred to all be set"
+            )
+        if not self.sufficient and self.insufficient_reason is None:
+            raise ValueError("sufficient=False requires insufficient_reason to be set")
+        return self
 
 
 class DirectionLLMItem(BaseModel):
