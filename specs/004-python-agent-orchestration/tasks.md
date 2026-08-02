@@ -75,15 +75,15 @@ without the NestJS service.
 
 > Write these tests FIRST; confirm they FAIL before the corresponding implementation task.
 
-- [ ] T004 [P] [US1] Unit tests for `extract_jd_structure` in
+- [X] T004 [P] [US1] Unit tests for `extract_jd_structure` in
   `agent-service/tests/unit/test_extract_jd_structure.py` — mock the `ChatOpenAI` call;
   cover the sufficient and insufficient branches and that a schema-violating mock
   response is rejected, not passed through (FR-002, FR-005)
-- [ ] T005 [P] [US1] Unit tests for `generate_candidate_directions` in
+- [X] T005 [P] [US1] Unit tests for `generate_candidate_directions` in
   `agent-service/tests/unit/test_generate_candidate_directions.py` — mock the
   `ChatOpenAI` call; cover the 0-6 direction count bound and schema validation (FR-003,
   FR-005)
-- [ ] T006 [US1] Contract test for `POST /extract` in
+- [X] T006 [US1] Contract test for `POST /extract` in
   `agent-service/tests/contract/test_extract_endpoint.py` using FastAPI's `TestClient` —
   mock the graph's LLM calls; assert the sufficient (200), insufficient (200), and
   invalid-request (4xx, no LLM call made) response shapes against
@@ -91,20 +91,20 @@ without the NestJS service.
 
 ### Implementation for User Story 1
 
-- [ ] T007 [P] [US1] Implement `extract_jd_structure` in
+- [X] T007 [P] [US1] Implement `extract_jd_structure` in
   `agent-service/src/agent_service/nodes.py` — `ChatPromptTemplate` + LCEL +
   `llm.with_structured_output(Schema, method="json_schema", include_raw=True)`, plus the
   explicit re-validation step before returning the state update (research.md §3)
   (depends on T002, T003; must satisfy T004)
-- [ ] T008 [P] [US1] Implement `generate_candidate_directions` in
+- [X] T008 [P] [US1] Implement `generate_candidate_directions` in
   `agent-service/src/agent_service/nodes.py` — same LangChain pattern as T007, input =
   structured extraction + the full original JD text (not a summary) (depends on T002,
   T003; must satisfy T005)
-- [ ] T009 [US1] Wire the `StateGraph` in `agent-service/src/agent_service/graph.py`:
+- [X] T009 [US1] Wire the `StateGraph` in `agent-service/src/agent_service/graph.py`:
   `extract_jd_structure` → conditional edge on `sufficient` → `reject_input` (trivial
   terminal node, no LLM call) or `generate_candidate_directions`, both reaching `END`;
   compile once at module load (depends on T007, T008)
-- [ ] T010 [US1] Implement the FastAPI app and `POST /extract` endpoint in
+- [X] T010 [US1] Implement the FastAPI app and `POST /extract` endpoint in
   `agent-service/src/agent_service/main.py` — invokes the compiled graph synchronously,
   maps graph state to the `ExtractSufficient`/`ExtractInsufficient` response models via
   FastAPI's `response_model` (second validation layer, research.md §3) (depends on T009;
