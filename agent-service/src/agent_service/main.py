@@ -12,9 +12,13 @@ from agent_service.schemas import (
     ExtractResponse,
     ExtractSufficient,
 )
+from agent_service.secrets import load_secrets_into_env
 
 app = FastAPI(title="JobPilot Agent Orchestration Service")
 
+# Must run before build_graph() - that's what constructs ChatOpenAI, which reads
+# OPENAI_API_KEY from the environment at construction time.
+load_secrets_into_env()
 _compiled_graph = build_graph()
 
 
