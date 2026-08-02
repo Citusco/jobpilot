@@ -1,0 +1,101 @@
+openapi: 3.0.3
+info:
+  title: JobPilot - Agent Orchestration Service (internal contract)
+  version: "0.1.0"
+  description: >
+    Internal HTTP contract between the NestJS API/persistence service and the Python
+    FastAPI + LangGraph agent orchestration service (constitution v2.0.0, Principle IV).
+    This document is authored by the NestJS side (specs/003-jd-extraction-nestjs-integration)
+    since the agent orchestration service does not exist yet as of this feature's
+    implementation — the Python service is expected to satisfy this contract once built.
+    Not a public API; only reachable service-to-service.
+
+paths:
+  /extract:
+    post:
+      summary: Extract structured JD info and generate candidate training directions
+      operationId: extractAndRecommend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractRequest'
+      responses:
+        '200':
+          description: >
+            Always 200 on a completed call — "sufficient: false" is a normal, successful
+            outcome (the input was judged insufficient), not an error. Only network
+            failure, timeout, or a response that fails schema validation should be
+            treated as a failure by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtractResponse'
+
+components:
+  schemas:
+    ExtractRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+
+    ExtractResponse:
+      oneOf:
+        - $ref: '#/components/schemas/ExtractSufficient'
+        - $ref: '#/components/schemas/ExtractInsufficient'
+
+    ExtractSufficient:
+      type: object
+      required: [sufficient, extraction, directions]
+      properties:
+        sufficient:
+          type: boolean
+          enum: [true]
+        extraction:
+          type: object
+          required: [role, techStack, seniority, seniorityInferred]
+          properties:
+            role:
+              type: string
+            techStack:
+              type: array
+              items:
+                type: string
+            seniority:
+              type: string
+            seniorityInferred:
+              type: boolean
+        directions:
+          type: array
+          minItems: 0
+          maxItems: 6
+          items:
+            type: object
+            required: [name, rationale, tags, suggestedQuestionCount]
+            properties:
+              name:
+                type: string
+              rationale:
+                type: string
+              tags:
+                type: array
+                minItems: 1
+                items:
+                  type: string
+              suggestedQuestionCount:
+                type: integer
+                minimum: 1
+
+    ExtractInsufficient:
+      type: object
+      required: [sufficient, reason]
+      properties:
+        sufficient:
+          type: boolean
+          enum: [false]
+        reason:
+          type: string
