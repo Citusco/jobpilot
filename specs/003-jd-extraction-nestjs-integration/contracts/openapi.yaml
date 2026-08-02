@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: JobPilot - JD Structured Extraction and Candidate Training Direction Recommendation
+  version: "0.2.0"
+  description: >
+    Corresponds to specs/003-jd-extraction-nestjs-integration. Public contract for this
+    endpoint is unchanged from specs/001-jd-training-directions/contracts/openapi.yaml
+    (FR-008) — only the internal implementation moved behind a service boundary (see
+    contracts/agent-orchestration.yaml for the new internal contract). One addition:
+    a 502 response for when the internal agent orchestration service is unreachable,
+    times out, or returns an invalid response (FR-005).
+
+paths:
+  /jd-submissions:
+    post:
+      summary: Submit JD text and get candidate training directions
+      operationId: createJdSubmission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JdSubmissionRequest'
+      responses:
+        '201':
+          description: >
+            Extraction succeeded and candidate training directions were generated
+            (count between 0 and 6; may be fewer than 3 when information is sparse).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JdSubmissionAccepted'
+        '422':
+          description: The JD text is insufficient to identify role/tech-stack; the submission was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JdSubmissionRejected'
+        '400':
+          description: The request body itself is invalid (e.g., missing the text field, or text is an empty string).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '502':
+          description: >
+            The agent orchestration service was unreachable, timed out, or returned a
+            response that failed contract validation (FR-005). No submission record is
+            persisted in this case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamError'
+
+components:
+  schemas:
+    JdSubmissionRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: The free-form Job Description original text.
+
+    JdSubmissionAccepted:
+      type: object
+      required: [id, status, extraction, directions, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted]
+        extraction:
+          $ref: '#/components/schemas/JdExtraction'
+        directions:
+          type: array
+          minItems: 0
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/CandidateTrainingDirection'
+        createdAt:
+          type: string
+          format: date-time
+
+    JdSubmissionRejected:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          type: string
+          enum: [rejected]
+        reason:
+          type: string
+
+    JdExtraction:
+      type: object
+      required: [role, techStack, seniority, seniorityInferred]
+      properties:
+        role:
+          type: string
+        techStack:
+          type: array
+          items:
+            type: string
+        seniority:
+          type: string
+        seniorityInferred:
+          type: boolean
+
+    CandidateTrainingDirection:
+      type: object
+      required: [id, name, rationale, tags, suggestedQuestionCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        rationale:
+          type: string
+        tags:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        suggestedQuestionCount:
+          type: integer
+          minimum: 1
+
+    ValidationError:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        issues:
+          type: array
+          items:
+            type: object
+
+    UpstreamError:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
