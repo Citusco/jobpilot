@@ -12,9 +12,11 @@ Principle IV for the full rationale:
 - **API & persistence service**: Node.js + TypeScript + NestJS + Prisma (ORM/migrations
   for Postgres, including pgvector as the vector store). Owns the public API surface and
   all persistent storage.
-- **Agent orchestration service**: Python + FastAPI + LangGraph. Owns LLM call
-  orchestration and agent/graph logic. A separate deployable service, not a library
-  imported into the API service.
+- **Agent orchestration service**: Python + FastAPI + LangGraph + LangChain. LangChain's
+  first-party integration packages (e.g. `langchain-openai`) provide the LLM client,
+  prompt-construction, and structured-output layer used *inside* LangGraph nodes;
+  LangGraph remains the orchestration/state-graph layer. A separate deployable service,
+  not a library imported into the API service.
 - Data pipeline: AWS (S3 + EventBridge + Lambda + Step Functions + DynamoDB)
 - Sandbox: Judge0 (self-hosted)
 
@@ -22,11 +24,20 @@ The two services communicate only through an explicit, documented interface (e.g
 HTTP/REST) — never a shared DB connection, in-process call, or filesystem state.
 
 ## LLM calls (current stage)
-Made from the Python agent orchestration service, calling the provider SDK directly
-(OpenAI / Bedrock) — no need to route through any gateway. We will eventually migrate to
-the Agent Forge gateway for unified routing and budget management, but this is not
-strongly enforced at the current stage — get the business logic working first; migrating
-to the gateway is a separate, independent refactor for later.
+Made from the Python agent orchestration service via LangChain's first-party integration
+packages (`langchain-openai`'s `ChatOpenAI` today; `langchain-aws` for Bedrock as a
+documented future option) — these wrap the provider SDK directly, so "no gateway
+indirection" still holds; that guarantee is about not routing through a
+routing/budget-management layer (Agent Forge), not about avoiding a client-side
+integration library. We will eventually migrate to the Agent Forge gateway for unified
+routing and budget management, but this is not strongly enforced at the current stage —
+get the business logic working first; migrating to the gateway is a separate,
+independent refactor for later.
+
+LangSmith tracing is enabled for this service (`LANGCHAIN_TRACING_V2=true` +
+`LANGCHAIN_API_KEY` + `LANGCHAIN_PROJECT` env vars) — opted into deliberately to get
+hands-on visibility into LangChain's own observability tooling, not required for the
+business logic to function.
 
 ## Code style
 - API/persistence service (TypeScript): ES modules (import/export), no CommonJS

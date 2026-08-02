@@ -1,6 +1,61 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 2.0.0 → 2.1.0
+Rationale: MINOR — Principle IV is expanded, not redefined: LangChain is added
+alongside the already-locked LangGraph in the agent orchestration service, and
+the "LLM providers called directly via their SDKs" wording is clarified (not
+reversed) to state that LangChain's first-party integration packages satisfy
+that requirement — "no gateway indirection" was always about routing/budget
+layers like Agent Forge, not about client-side integration libraries. Nothing
+already in the stack is removed or redefined.
+
+Modified principles:
+  - IV. Locked Technology Stack — agent orchestration service bullet now
+    reads "Python + FastAPI + LangGraph + LangChain"; LLM-provider-calling
+    paragraph reworded to describe calls going through LangChain's
+    integration packages (which wrap the provider SDK directly) rather than
+    a bare SDK call, with the "no gateway indirection" guarantee unchanged
+    and now explicitly scoped to what it always meant.
+
+Added sections: none new — Principle IV rewritten in place.
+
+Removed sections: none.
+
+Rationale for the addition (recorded per Principle IV's "requires discussion
+and explicit agreement" clause): the same reasoning class already established
+in this project for Drizzle over a bare `pg` driver
+(specs/001-jd-training-directions/research.md §2) — deliberately chosen for
+hands-on learning/resume value in a project explicitly optimized for that,
+not because it's strictly required over calling `ChatOpenAI`'s underlying SDK
+directly. Discussed and agreed with the user before this amendment.
+
+Templates requiring updates:
+  - .specify/templates/plan-template.md ✅ no change needed (generic/dynamic)
+  - .specify/templates/spec-template.md ✅ no change needed (technology-
+    agnostic by design)
+  - .specify/templates/tasks-template.md ✅ no change needed (no stack-
+    specific references)
+  - .claude/skills/speckit-* ✅ checked — no hardcoded references to the
+    agent orchestration service's LLM-calling mechanism found
+  - CLAUDE.md ⚠️ updated to match (see this file's Governance section)
+  - specs/001-jd-training-directions/*, specs/002-nestjs-prisma-migration/*,
+    specs/003-jd-extraction-nestjs-integration/* — intentionally NOT
+    updated; historical artifacts documenting decisions made under the
+    stack as it stood at the time, not current guidance
+
+Follow-up TODOs: none — no placeholders were deferred.
+
+Deferred non-governance intents (see Next Actions in the command output):
+  - Run /speckit-specify for the actual Python FastAPI + LangGraph +
+    LangChain agent orchestration service feature, using the architecture
+    design already worked out (LangGraph for orchestration, LangChain for
+    the LLM-calling primitives inside nodes) as the feature description
+-->
+
+<!--
+Sync Impact Report (previous amendment, retained for history)
+==================
 Version change: 1.1.0 → 2.0.0
 Rationale: MAJOR — Principle IV (Locked Technology Stack) is redefined, not
 just expanded: the backend moves from a single Node.js/Fastify service to a
@@ -135,17 +190,25 @@ between them:
   Prisma as the ORM/migration tool for Postgres (including pgvector as the
   vector store on the same Postgres instance). Owns the public API surface,
   request/response contracts, and all persistent storage.
-- **Agent orchestration service** — Python + FastAPI + LangGraph. Owns LLM
-  call orchestration and agent/graph logic. This is a separate deployable
+- **Agent orchestration service** — Python + FastAPI + LangGraph +
+  LangChain. LangChain's first-party integration packages (e.g.
+  `langchain-openai`) provide the LLM client, prompt-construction, and
+  structured-output layer used *inside* LangGraph nodes; LangGraph remains
+  the orchestration/state-graph layer. This is a separate deployable
   service, not a library imported into the API service.
 - **Data pipeline** (unchanged): AWS S3 + EventBridge + Lambda + Step
   Functions + DynamoDB.
 - **Sandbox** (unchanged): self-hosted Judge0.
 
-LLM providers are called directly via their SDKs (OpenAI / Bedrock) from the
-agent orchestration service — no gateway indirection is required at this
-stage; routing through a unified gateway (Agent Forge) is an explicitly
-deferred, independent future migration, not a current requirement.
+LLM providers are called via LangChain's first-party integration packages
+(`langchain-openai`'s `ChatOpenAI` today; `langchain-aws` for Bedrock as a
+documented future option) from the agent orchestration service. These
+packages wrap the provider SDK directly and satisfy "no gateway
+indirection" — the indirection that requirement guards against is a
+routing/budget-management layer (Agent Forge), not a client-side
+integration library; routing through a unified gateway remains an
+explicitly deferred, independent future migration, not a current
+requirement.
 
 Communication between the two services MUST go through an explicit,
 documented interface (e.g., an HTTP/REST contract). The services MUST NOT
@@ -162,10 +225,15 @@ dependency sprawl and premature abstraction before the underlying business
 logic has proven itself. Splitting API/persistence from agent orchestration
 lets each side use the runtime best suited to its job — NestJS's structured
 API conventions and Prisma's schema tooling for the request/persistence
-surface, Python's native LangGraph ecosystem for the agent surface — at the
-cost of an explicit service boundary that must be deliberately designed,
-which is why Principle III now treats changes to that boundary as a
-structural change requiring full SDD.
+surface, Python's native LangGraph and LangChain ecosystem for the agent
+surface — at the cost of an explicit service boundary that must be
+deliberately designed, which is why Principle III now treats changes to that
+boundary as a structural change requiring full SDD. LangChain's addition
+alongside LangGraph follows the same "deliberately chosen for hands-on
+learning/resume value" reasoning already established for Drizzle over a
+bare `pg` driver (specs/001-jd-training-directions/research.md §2) — this
+project treats that as a legitimate tradeoff category, not scope creep,
+as long as it's discussed and recorded rather than added silently.
 
 ### V. Definition of Done: Typed, Tested, Reviewed
 
@@ -275,4 +343,4 @@ begins, and MUST be re-checked after Phase 1 design. Any violation MUST be
 justified in that plan's Complexity Tracking table or the simpler
 alternative MUST be adopted instead.
 
-**Version**: 2.0.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-01
+**Version**: 2.1.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-02
