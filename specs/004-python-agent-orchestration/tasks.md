@@ -46,12 +46,12 @@ Python code in the repo.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T002 [P] Define Pydantic schemas in
+- [X] T002 [P] Define Pydantic schemas in
   `agent-service/src/agent_service/schemas.py`: the `/extract` request model, the
   `ExtractSufficient`/`ExtractInsufficient` response models (matching
   `specs/003-jd-extraction-nestjs-integration/contracts/agent-orchestration.yaml`
   exactly, FR-006), and the LangGraph state model (depends on T001)
-- [ ] T003 [P] Construct the shared `ChatOpenAI` client in
+- [X] T003 [P] Construct the shared `ChatOpenAI` client in
   `agent-service/src/agent_service/llm.py` with `timeout=20`, `max_retries=2`
   (research.md §4) — no LangSmith code needed, tracing activates purely via env vars
   (research.md §5) (depends on T001)
