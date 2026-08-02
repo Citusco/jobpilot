@@ -32,7 +32,7 @@ New top-level `agent-service/` directory (per plan.md Structure Decision), `src`
 **Purpose**: Get a real Python project scaffolded — there is none yet, this is the first
 Python code in the repo.
 
-- [ ] T001 Initialize `agent-service/` with `uv init`; write `pyproject.toml` with the
+- [X] T001 Initialize `agent-service/` with `uv init`; write `pyproject.toml` with the
   exact pinned dependencies from research.md §2 (`fastapi==0.141.1`,
   `langgraph==1.2.10`, `langchain-core==1.5.3`, `langchain-openai==1.4.1`,
   `langsmith==0.10.15`) plus dev dependencies (`ruff`, `mypy`, `pytest`); configure

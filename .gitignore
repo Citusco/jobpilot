@@ -143,3 +143,14 @@ vite.config.ts.timestamp-*
 .vite/
 
 /src/generated/prisma
+
+# Python (agent-service/)
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+# uv.lock and .python-version ARE committed (reproducibility, same reasoning as
+# package-lock.json) - not listed here on purpose
