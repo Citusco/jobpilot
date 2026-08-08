@@ -203,3 +203,51 @@ could occur (e.g., a renamed `concept_id` breaking every historical answer recor
 any error being thrown).
 **Status**: active
 **Source**: DESIGN.md §12
+
+## 2026-08-08 — Measurement-first discipline for data-dependent claims in spec work
+
+**Decision**: before `/speckit-specify`, when a feature description contains a claim
+about data that already exists in the repository or is otherwise measurable — corpus
+shape, file counts, heading distributions, expected LLM output shape, existing table
+contents — that claim is verified by measurement first, and the measured numbers (with
+their counting basis stated) go into the feature description rather than the source
+document's characterization of them. A useful test: for every number and every quantifier
+("mostly," "highly consistent," "the majority") in a draft spec, ask whether someone
+counted it or someone believed it.
+
+Two parts of this are the most likely to be lost if only summarized, so they're stated in
+full:
+
+1. **The counting basis must be stated alongside every number.** Two separate rounds of
+   correction in the feature that produced this decision (`specs/005-corpus-ingest-
+   foundation`) were caused by counts silently switching between an H2-only and an H2+H3
+   basis — the resulting figures looked like corrections but were measuring something
+   different from what they replaced, and nothing about the number itself signaled that.
+2. **An agent that identifies an unverified data-dependent claim must stop and surface
+   it for a human decision — not measure autonomously and then proceed on its own
+   numbers.** Deciding what to measure, on what basis, and whether the result changes the
+   design are judgment calls. The feature that produced this decision generated two
+   incorrect self-corrections (a counting-basis switch, and a 1-2 count drift on
+   re-verification) precisely at the points where measurement was performed without that
+   judgment being applied by a human. The agent's job is to flag the claim and say what
+   would settle it; the decision to measure, and the reading of the result, stay with the
+   human.
+
+**Scope note**: this does not apply to design intent, product decisions, or anything not
+yet observable — those are what `spec.md` is for.
+
+**Why**: this feature's review found that three separate claims `spec.md` had inherited
+from `docs/DESIGN.md`, and written into a requirement or a success criterion before anyone
+counted, were false when measured against the actual azure corpus: that benefit content is
+mostly at H3 and that splitting to H3 "recovers" it (§7.5 — the real count is 9 benefit
+headings corpus-wide, only 3 of them at H3); that the bold-label bullet pattern is "highly
+consistent" across the corpus (§7.5 — the specified form matches 5.6% of bullets, and
+77.8% carry no label at all); and that aspnet's templates are worth including as "buried
+gold" for this purpose (§7.2 — measured, they supply `when` in volume but contain no
+benefit-bearing template at all). This is the exact failure mode DESIGN.md §7.5 documents
+about itself — "chunking rules must be based on actually observing the raw data, not
+assumptions about document structure" — and it recurred here because the observation step
+happened after the spec was written rather than before it.
+**Status**: active
+**Source**: `specs/005-corpus-ingest-foundation`'s review process (`research.md` §6,
+`checklists/requirements.md`'s correction-pass notes)

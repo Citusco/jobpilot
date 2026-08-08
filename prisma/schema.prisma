@@ -45,3 +45,80 @@ model CandidateTrainingDirection {
 
   @@map("candidate_training_directions")
 }
+
+// --- Corpus ingest foundation (specs/005-corpus-ingest-foundation) ---
+// Additive only: unrelated to JdSubmission/CandidateTrainingDirection above.
+// conceptId/chunkId are stable, human-meaningful string primary keys (not
+// gen_random_uuid()) — see data-model.md for why.
+
+enum ConceptKind {
+  language
+  framework
+  platform
+  architecture
+  practice
+  tool
+  domain
+}
+
+enum ConceptStatus {
+  candidate
+  active
+  deprecated
+  rejected
+}
+
+model Concept {
+  conceptId String        @id @map("concept_id")
+  name      String
+  aliases   String[]
+  kind      ConceptKind
+  related   String[]
+  hasCorpus Boolean       @default(false) @map("has_corpus")
+  embedding Unsupported("vector(1536)")?
+  status    ConceptStatus @default(candidate)
+  addedFrom String        @map("added_from")
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  chunks DocChunk[]
+
+  @@map("concepts")
+}
+
+enum ChunkKind {
+  cost
+  benefit
+  when
+  example
+  meta
+  unmapped
+}
+
+enum KindConfidence {
+  regex
+  llm
+  manual
+}
+
+model DocChunk {
+  chunkId        String         @id @map("chunk_id")
+  patternId      String         @map("pattern_id")
+  kind           ChunkKind
+  label          String
+  content        String
+  contextPrefix  String         @map("context_prefix")
+  sourceUrl      String         @map("source_url")
+  citable        Boolean
+  kindConfidence KindConfidence @map("kind_confidence")
+  docDate        DateTime?      @map("doc_date") @db.Timestamptz
+  contentHash    String         @map("content_hash")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  concept Concept @relation(fields: [patternId], references: [conceptId], onDelete: Restrict)
+
+  @@index([patternId])
+  @@index([contentHash])
+  @@map("doc_chunks")
+}
