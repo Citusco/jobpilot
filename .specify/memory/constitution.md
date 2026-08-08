@@ -1,6 +1,72 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 2.1.0 → 3.0.0
+Rationale: MAJOR — Principle III and Principle IV are both redefined (not just
+expanded), removing Judge0 from the project entirely: coding/live-coding questions
+have been abandoned in favor of concept/decision questions with verbatim-sourced
+grounding (see docs/DESIGN.md §1, §14, produced via a separate ~15-round design
+session and now the project's source of truth for design decisions). This is a
+backward-incompatible reduction of the approved stack and of Principle III's
+trigger list, following the same amendment-required precedent already established
+for stack changes (see the 2.0.0 report below).
+
+Modified principles:
+  - III. Plan-Before-Build for Structural Changes — the Full-SDD trigger list loses
+    the "Judge0 sandbox security boundaries (execution isolation, resource limits,
+    network access controls)" entry. No other trigger changed.
+  - IV. Locked Technology Stack — the "**Sandbox** (unchanged): self-hosted Judge0"
+    bullet is removed entirely. LangChain's presence in the agent orchestration
+    service bullet is intentionally untouched by this amendment — DESIGN.md's
+    §4.5 "no LangChain for the new pipeline" stance is scoped to new work only and
+    does not reverse this already-agreed (2026-08-02) locked-stack decision; see
+    docs/DECISIONS.md for the explicit reconciliation between the two.
+
+Added sections: none new.
+
+Removed sections: none (bullets removed within existing principles, not whole
+sections).
+
+Rationale for the removal: code questions were explored and deliberately
+abandoned — "too shallow to matter, too deep to be tractable" — which removes the
+only reason Judge0-based execution was in the stack. Recorded per Principle IV's
+"requires discussion and explicit agreement" clause; discussed and agreed with the
+user as part of adopting docs/DESIGN.md as the new design source of truth.
+
+Templates requiring updates:
+  - .specify/templates/plan-template.md ✅ no change needed (no Judge0 reference
+    found)
+  - .specify/templates/spec-template.md ✅ no change needed (no Judge0 reference
+    found)
+  - .specify/templates/tasks-template.md ✅ no change needed (no Judge0 reference
+    found)
+  - .claude/skills/speckit-* ✅ checked — no hardcoded Judge0 references found
+  - CLAUDE.md ✅ already updated (in the same session, before this amendment) —
+    the "Sandbox: Judge0" tech-stack line and the "Judge0 security-boundary
+    changes" Full-SDD trigger were both removed by hand; this amendment's
+    constitution edits match what CLAUDE.md already reflects
+  - README.md ⚠ pending — still references Judge0 (title framing as a
+    "live-coding training content generator," and a "Judge0-sandboxed code
+    execution" line in the Project Status checklist). Deliberately NOT updated in
+    this pass — flagged as a follow-up, out of scope for this amendment
+  - specs/001-jd-training-directions/*, specs/002-nestjs-prisma-migration/*,
+    specs/003-jd-extraction-nestjs-integration/*, specs/004-python-agent-
+    orchestration/* — intentionally NOT updated; historical artifacts documenting
+    decisions made under the stack as it stood at the time, not current guidance
+
+Follow-up TODOs: README.md's Judge0/live-coding references (see above).
+
+Deferred non-governance intents (see Next Actions in the command output):
+  - Adopting docs/DESIGN.md's actual pipeline/data-model design (concept and
+    doc_chunk tables, the eight-step extract/resolve/combine/retrieve/generate/
+    verify pipeline, LangGraph topology) is future implementation work, not part
+    of this governance amendment — it will need its own Full-SDD feature(s) per
+    Principle III once scoped.
+-->
+
+<!--
+Sync Impact Report (previous amendment, retained for history)
+==================
 Version change: 2.0.0 → 2.1.0
 Rationale: MINOR — Principle IV is expanded, not redefined: LangChain is added
 alongside the already-locked LangGraph in the agent orchestration service, and
@@ -167,8 +233,6 @@ Jumping straight to code for these categories of change is NOT permitted:
 - RAG/retrieval architecture (pgvector index design, chunking strategy,
   retrieval/ranking approach)
 - Cloud infrastructure (S3, EventBridge, Lambda, Step Functions, DynamoDB)
-- Judge0 sandbox security boundaries (execution isolation, resource limits,
-  network access controls)
 - Service boundary or cross-language interface changes (new or modified
   contract between the NestJS API service and the Python agent
   orchestration service, or introduction of an additional service)
@@ -198,7 +262,6 @@ between them:
   service, not a library imported into the API service.
 - **Data pipeline** (unchanged): AWS S3 + EventBridge + Lambda + Step
   Functions + DynamoDB.
-- **Sandbox** (unchanged): self-hosted Judge0.
 
 LLM providers are called via LangChain's first-party integration packages
 (`langchain-openai`'s `ChatOpenAI` today; `langchain-aws` for Bedrock as a
@@ -343,4 +406,4 @@ begins, and MUST be re-checked after Phase 1 design. Any violation MUST be
 justified in that plan's Complexity Tracking table or the simpler
 alternative MUST be adopted instead.
 
-**Version**: 2.1.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-02
+**Version**: 3.0.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-08
