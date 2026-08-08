@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
@@ -182,7 +182,13 @@ async function main() {
 
 // Guarded so importing this module (e.g. from a test) never triggers a real
 // run — main() only executes when this file is the process entry point.
-const isEntryPoint = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`;
+// pathToFileURL (not manual string concatenation) is required here: a naive
+// `file://${path}` is missing the third slash Windows drive-letter paths
+// need (file:///D:/... not file://D:/...), which silently made this guard
+// always false on Windows and meant `node scripts/ingest-corpus.ts` never
+// actually ran main() at all — caught by actually running it end-to-end
+// against a real database, not by inspection.
+const isEntryPoint = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isEntryPoint) {
   void main();
 }
