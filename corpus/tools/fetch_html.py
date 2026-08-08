@@ -263,12 +263,18 @@ def discover_one(source: dict) -> list[str]:
         before = len(urls)
         urls = [u for u in urls if any(urlparse(u).path.startswith(p) for p in content_prefixes)]
         print(f"[{sid}] content_path_prefixes narrowed {before} -> {len(urls)}")
+    exclude_prefixes = source.get("exclude_path_prefixes")
+    if exclude_prefixes:
+        before = len(urls)
+        urls = [u for u in urls if not any(urlparse(u).path.startswith(p) for p in exclude_prefixes)]
+        print(f"[{sid}] exclude_path_prefixes narrowed {before} -> {len(urls)}")
     return urls
 
 
 def cmd_discover(sources, only):
     DISCOVER_DIR.mkdir(parents=True, exist_ok=True)
-    summary = {}
+    summary_path = META_DIR / "discover-summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
     for source in sources:
         sid = source["id"]
         if only and sid not in only:
@@ -284,9 +290,7 @@ def cmd_discover(sources, only):
             flag = f"  <-- ABOVE expected range [{lo}, {hi}], scope likely too broad"
         summary[sid] = {"count": len(urls), "expected_range": [lo, hi], "flag": bool(flag)}
         print(f"[{sid}] discovered {len(urls)} URLs -> {out_path}{flag}")
-    (META_DIR / "discover-summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def url_to_relpath(url: str) -> str:

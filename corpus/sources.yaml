@@ -285,7 +285,19 @@ sources:
       # unrestricted (path-level second cut deferred to the post-probe pass,
       # same as every other source per task C/D notes).
       - https://www.anthropic.com/engineering
-      - https://platform.claude.com/docs
+      - https://platform.claude.com/docs/en
+    exclude_path_prefixes:
+      # per-endpoint API parameter reference — citable is already false for
+      # this whole source, and reference-table pages are not where
+      # tradeoff/decision prose lives.
+      - /docs/en/api/
+    content_path_prefixes:
+      # platform.claude.com's sitemap lists the SAME docs in 12 locales
+      # (de/en/es/fr/id/it/ja/ko/pt-BR/ru/zh-CN/zh-TW) — a 12x multiplier
+      # that was the real reason the raw count looked huge (2761), not page
+      # count. English only.
+      - /docs/en/
+      - /engineering/
     max_depth: 2
     discovery_strategy: sitemap-then-bfs
     expected_count_range: [null, null]
@@ -307,10 +319,14 @@ sources:
       infinite redirect loops ("Exceeded 30 redirects"), while
       platform.claude.com/docs/en/intro loads directly with no redirect.
       Reseeded on platform.claude.com accordingly.
-      See corpus/_meta/discover-summary.json for the corrected count, and
-      decide before --fetch whether the full docs set (likely still ~1000s
-      of pages, mostly API reference) is worth fetching whole or needs a
-      path-level second cut.
+      (3) Human review of the discover output (2787 URLs) called for a
+      narrower scope before spending the fetch budget: excluded
+      /docs/en/api/ (per-endpoint parameter reference — this source is
+      already citable:false, and reference tables aren't where
+      tradeoff/decision prose lives) and discovered the sitemap lists the
+      SAME docs in 12 locales, an unrelated 12x multiplier — content_path_prefixes
+      narrows the final set to English (/docs/en/) + the engineering blog.
+      Net: 2787 -> ~200, without losing any unique English content.
 
   - id: aws-wa
     kind: html

@@ -168,49 +168,74 @@
   },
   "html_sources": {
     "msio": {
-      "status": "discovered_pending_fetch_approval",
+      "status": "fetched",
       "discovered_count": 53,
       "expected_count_range": [
         40,
         70
       ],
-      "count_outside_expected_range": false
+      "count_outside_expected_range": false,
+      "files_fetched": 53,
+      "total_bytes": 1250611,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
     },
     "fowler": {
-      "status": "discovered_pending_fetch_approval",
+      "status": "fetched",
       "discovered_count": 924,
       "expected_count_range": [
         150,
         600
       ],
-      "count_outside_expected_range": true
+      "count_outside_expected_range": true,
+      "files_fetched": 920,
+      "total_bytes": 30369178,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
     },
     "anthropic": {
-      "status": "discovered_pending_fetch_approval",
-      "discovered_count": 2787,
+      "status": "fetched",
+      "discovered_count": 220,
       "expected_count_range": [
         null,
         null
       ],
-      "count_outside_expected_range": false
+      "count_outside_expected_range": false,
+      "files_fetched": 220,
+      "total_bytes": 234125185,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
     },
     "aws-wa": {
-      "status": "discovered_pending_fetch_approval",
+      "status": "fetched",
       "discovered_count": 251,
       "expected_count_range": [
         null,
         null
       ],
-      "count_outside_expected_range": false
+      "count_outside_expected_range": false,
+      "files_fetched": 238,
+      "total_bytes": 1403034,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
     },
     "sre": {
-      "status": "discovered_pending_fetch_approval",
+      "status": "fetched",
       "discovered_count": 102,
       "expected_count_range": [
         null,
         null
       ],
-      "count_outside_expected_range": false
+      "count_outside_expected_range": false,
+      "files_fetched": 102,
+      "total_bytes": 4940556,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
     }
   },
   "totals": {
@@ -218,7 +243,8 @@
     "git_files_before_filter": 26952,
     "git_files_after_filter": 5905,
     "html_sources": 5,
-    "html_urls_discovered": 4117,
-    "html_sources_fetched": 0
+    "html_urls_discovered": 1550,
+    "html_sources_fetched": 5,
+    "html_files_fetched": 1533
   }
 }
