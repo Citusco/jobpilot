@@ -166,3 +166,12 @@ CLAUDE.md
 !.specify/memory/constitution.md
 specs/*/tasks.md
 specs/*/checklists/
+
+# Interview-corpus raw cache and working state — large and/or re-derivable from
+# sources.yaml + the fetcher scripts, not source of truth. Tracked instead:
+# corpus/sources.yaml, corpus/_meta/manifest/, corpus/licenses/, corpus/summary.json,
+# corpus/reports/.
+corpus/raw/
+corpus/.venv/
+corpus/_meta/*
+!corpus/_meta/manifest/

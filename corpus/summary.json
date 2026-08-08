@@ -1,0 +1,250 @@
+{
+  "git_sources": {
+    "azure": {
+      "status": "fetched",
+      "repo": "https://github.com/MicrosoftDocs/architecture-center.git",
+      "commit_sha": "a8c749f836cfa2d7f03e415de4373b2b8c602f33",
+      "fetched_at": "2026-08-04T06:01:12.764023+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 216,
+      "files_after_filter": 58
+    },
+    "dotnet": {
+      "status": "fetched",
+      "repo": "https://github.com/dotnet/docs.git",
+      "commit_sha": "d74ba594d6d72cada5cb51f6ef94c8b618f2834a",
+      "fetched_at": "2026-08-04T06:01:19.403446+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 4303,
+      "files_after_filter": 2089
+    },
+    "aspnet": {
+      "status": "fetched",
+      "repo": "https://github.com/dotnet/AspNetCore.Docs.git",
+      "commit_sha": "bb91b97c63cb0c2a66227c069e2ed903fd22eced",
+      "fetched_at": "2026-08-04T06:01:35.346892+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 19940,
+      "files_after_filter": 1685
+    },
+    "efcore": {
+      "status": "fetched",
+      "repo": "https://github.com/dotnet/EntityFramework.Docs.git",
+      "commit_sha": "7ca120dcb01fa940686da9d3b9c8dd381a93e520",
+      "fetched_at": "2026-08-04T06:01:37.273175+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 246,
+      "files_after_filter": 183
+    },
+    "react": {
+      "status": "fetched",
+      "repo": "https://github.com/reactjs/react.dev.git",
+      "commit_sha": "c7d6b700038c63d1aaf2c649af1aefe01ebbacac",
+      "fetched_at": "2026-08-04T06:01:39.045087+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 207,
+      "files_after_filter": 185
+    },
+    "ts": {
+      "status": "fetched",
+      "repo": "https://github.com/microsoft/TypeScript-Website.git",
+      "commit_sha": "c8170c35bda4811c9516cbb69c39241ae4beb6d9",
+      "fetched_at": "2026-08-04T06:05:51.568097+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 157,
+      "files_after_filter": 135
+    },
+    "nextjs": {
+      "status": "fetched",
+      "repo": "https://github.com/vercel/next.js.git",
+      "commit_sha": "4be2ee7443820454c5c7b802cc8bfed516856939",
+      "fetched_at": "2026-08-04T06:01:42.842593+00:00",
+      "license": "MIT",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 488,
+      "files_after_filter": 451
+    },
+    "mdn": {
+      "status": "fetched",
+      "repo": "https://github.com/mdn/content.git",
+      "commit_sha": "285179734bb0505a755c76aa556b6cb12d81b643",
+      "fetched_at": "2026-08-04T06:01:45.515944+00:00",
+      "license": "CC-BY-SA-2.5 / CC0",
+      "license_tier": "open-sa",
+      "citable": true,
+      "files_before_filter": 309,
+      "files_after_filter": 238
+    },
+    "owasp": {
+      "status": "fetched",
+      "repo": "https://github.com/OWASP/CheatSheetSeries.git",
+      "commit_sha": "1fe8c37a68251af949dd4311f5b548cd236016da",
+      "fetched_at": "2026-08-04T06:01:47.144649+00:00",
+      "license": "CC-BY-SA-4.0",
+      "license_tier": "open-sa",
+      "citable": true,
+      "files_before_filter": 151,
+      "files_after_filter": 137
+    },
+    "msplay": {
+      "status": "fetched",
+      "repo": "https://github.com/microsoft/code-with-engineering-playbook.git",
+      "commit_sha": "016770e43d8a75be87b98c000c049f07c4a6e6f8",
+      "fetched_at": "2026-08-04T06:01:49.679649+00:00",
+      "license": "CC-BY-4.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 378,
+      "files_after_filter": 246
+    },
+    "googlerev": {
+      "status": "fetched",
+      "repo": "https://github.com/google/eng-practices.git",
+      "commit_sha": "3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c",
+      "fetched_at": "2026-08-04T06:01:51.083101+00:00",
+      "license": "CC-BY-3.0",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 16,
+      "files_after_filter": 14
+    },
+    "12f": {
+      "status": "fetched",
+      "repo": "https://github.com/heroku/12factor.git",
+      "commit_sha": "1385d2c80bac38c25647651f6f5ec769561828dc",
+      "fetched_at": "2026-08-04T06:01:52.838225+00:00",
+      "license": "MIT (unconfirmed in body text)",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 29,
+      "files_after_filter": 19
+    },
+    "mcp": {
+      "status": "fetched",
+      "repo": "https://github.com/modelcontextprotocol/docs.git",
+      "commit_sha": "573dc60c2e7aab2605b29d0bf27194aa7b02e4fb",
+      "fetched_at": "2026-08-04T06:05:53.328135+00:00",
+      "license": "MIT",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 20,
+      "files_after_filter": 16
+    },
+    "langgraph": {
+      "status": "fetched",
+      "repo": "https://github.com/langchain-ai/docs.git",
+      "commit_sha": "87081c9a7e2e1888aff5712a807f3f872c65de73",
+      "fetched_at": "2026-08-04T06:01:55.883442+00:00",
+      "license": "MIT",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 82,
+      "files_after_filter": 58
+    },
+    "openai": {
+      "status": "fetched",
+      "repo": "https://github.com/openai/openai-agents-python.git",
+      "commit_sha": "08fa43c099dc572fed52b60ed99069a3ac92379d",
+      "fetched_at": "2026-08-04T06:01:57.635694+00:00",
+      "license": "MIT",
+      "license_tier": "open",
+      "citable": true,
+      "files_before_filter": 410,
+      "files_after_filter": 391
+    }
+  },
+  "html_sources": {
+    "msio": {
+      "status": "fetched",
+      "discovered_count": 53,
+      "expected_count_range": [
+        40,
+        70
+      ],
+      "count_outside_expected_range": false,
+      "files_fetched": 53,
+      "total_bytes": 1250611,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
+    },
+    "fowler": {
+      "status": "fetched",
+      "discovered_count": 924,
+      "expected_count_range": [
+        150,
+        600
+      ],
+      "count_outside_expected_range": true,
+      "files_fetched": 920,
+      "total_bytes": 30369178,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
+    },
+    "anthropic": {
+      "status": "fetched",
+      "discovered_count": 220,
+      "expected_count_range": [
+        null,
+        null
+      ],
+      "count_outside_expected_range": false,
+      "files_fetched": 220,
+      "total_bytes": 234125185,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
+    },
+    "aws-wa": {
+      "status": "fetched",
+      "discovered_count": 251,
+      "expected_count_range": [
+        null,
+        null
+      ],
+      "count_outside_expected_range": false,
+      "files_fetched": 238,
+      "total_bytes": 1403034,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
+    },
+    "sre": {
+      "status": "fetched",
+      "discovered_count": 102,
+      "expected_count_range": [
+        null,
+        null
+      ],
+      "count_outside_expected_range": false,
+      "files_fetched": 102,
+      "total_bytes": 4940556,
+      "license": "unknown",
+      "license_tier": "unknown",
+      "citable": false
+    }
+  },
+  "totals": {
+    "git_sources": 15,
+    "git_files_before_filter": 26952,
+    "git_files_after_filter": 5905,
+    "html_sources": 5,
+    "html_urls_discovered": 1550,
+    "html_sources_fetched": 5,
+    "html_files_fetched": 1533
+  }
+}

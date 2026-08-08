@@ -1,0 +1,379 @@
+# corpus/sources.yaml
+#
+# Single source of truth for the interview-corpus ingestion pipeline.
+# To add a new source: add one entry here. Do not write one-off fetch scripts —
+# the fetcher (corpus/tools/fetch.py) dispatches purely on `kind`.
+#
+# kind: git  -> shallow, blob-less, sparse-checkout clone of listed paths, pinned to a commit.
+# kind: html -> polite crawler (robots.txt, 1 req/s, retries), raw bytes only, no rewriting.
+#
+# license_tier drives what the generated interview questions are allowed to do with the
+# source (see corpus/reports/ and CLAUDE-adjacent design notes for the full rationale):
+#   open       CC-BY / MIT / Apache-2.0            -> citable: true, verbatim OK
+#   open-sa    CC-BY-SA (or CC0-mixed like MDN)      -> citable: true, verbatim OK + must note license
+#   unknown    no clear redistribution license       -> citable: false, content usable for framing
+#                                                        only, no verbatim snippet, link out instead
+#
+# commit_sha / fetched_at are NOT tracked here — they are per-file facts recorded in
+# corpus/_meta/manifest/{id}.jsonl by the fetcher after a successful pull.
+
+sources:
+  # ---------------------------------------------------------------------------
+  # git sources (15)
+  # ---------------------------------------------------------------------------
+  - id: azure
+    kind: git
+    repo: https://github.com/MicrosoftDocs/architecture-center.git
+    paths:
+      - docs/patterns
+      - docs/guide/architecture-styles
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: >
+      Only git source in the first batch with fixed decision-relevant sections
+      (Context/Solution/Issues and considerations/When to use) — see structure-probe.
+
+  - id: dotnet
+    kind: git
+    repo: https://github.com/dotnet/docs.git
+    paths:
+      - docs/csharp
+      - docs/standard
+      - docs/architecture
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: ""
+
+  - id: aspnet
+    kind: git
+    repo: https://github.com/dotnet/AspNetCore.Docs.git
+    paths:
+      - aspnetcore
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: >
+      Docs-with-compilable-samples repo: large fraction of tracked files under
+      aspnetcore/ are .cs/.cshtml/.svg sample project files, not prose
+      (Microsoft's `:::code source=...:::` include syntax). Filtered hard by
+      task C/D — see structure-probe for before/after counts.
+
+  - id: efcore
+    kind: git
+    repo: https://github.com/dotnet/EntityFramework.Docs.git
+    paths:
+      - entity-framework/core
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: >
+      Path confirmed via GitHub API (repo root has entity-framework/{core,ef6,
+      efcore-and-ef6,dotnet-data}). Scoped to entity-framework/core (EF Core
+      proper) since ef6 targets legacy .NET Framework, out of scope for this
+      stack. efcore-and-ef6 comparison docs excluded for the same reason.
+
+  - id: react
+    kind: git
+    repo: https://github.com/reactjs/react.dev.git
+    paths:
+      - src/content/learn
+      - src/content/reference
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: ""
+
+  - id: ts
+    kind: git
+    repo: https://github.com/microsoft/TypeScript-Website.git
+    paths:
+      - packages/documentation/copy/en
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: >
+      Path corrected from the shorthand "copy/en" — that literal path is
+      packages/typescriptlang-org/src/copy/en, which is .ts UI-copy source,
+      not docs. The actual handbook lives at packages/documentation/copy/en
+      (confirmed via GitHub contents API), containing handbook-v1,
+      handbook-v2, reference, release-notes, etc.
+
+  - id: nextjs
+    kind: git
+    repo: https://github.com/vercel/next.js.git
+    paths:
+      - docs
+    license: MIT
+    license_tier: open
+    citable: true
+    notes: ""
+
+  - id: mdn
+    kind: git
+    repo: https://github.com/mdn/content.git
+    paths:
+      - files/en-us/web/performance
+      - files/en-us/web/security
+      - files/en-us/web/accessibility
+    license: CC-BY-SA-2.5 / CC0
+    license_tier: open-sa
+    citable: true
+    notes: >
+      Scoped to these three subtrees only — full mdn/content is very large.
+      Per-page license can vary between CC-BY-SA-2.5 and CC0; treat as
+      CC-BY-SA-2.5 (the more restrictive of the two) for attribution purposes
+      unless a page's own front matter says otherwise.
+
+  - id: owasp
+    kind: git
+    repo: https://github.com/OWASP/CheatSheetSeries.git
+    paths:
+      - cheatsheets
+    license: CC-BY-SA-4.0
+    license_tier: open-sa
+    citable: true
+    notes: ""
+
+  - id: msplay
+    kind: git
+    repo: https://github.com/microsoft/code-with-engineering-playbook.git
+    paths:
+      - docs
+    license: CC-BY-4.0
+    license_tier: open
+    citable: true
+    notes: ""
+
+  - id: googlerev
+    kind: git
+    repo: https://github.com/google/eng-practices.git
+    paths:
+      - review
+    license: CC-BY-3.0
+    license_tier: open
+    citable: true
+    notes: ""
+
+  - id: 12f
+    kind: git
+    repo: https://github.com/heroku/12factor.git
+    paths:
+      - content/en
+    license: MIT (unconfirmed in body text)
+    license_tier: open
+    citable: true
+    notes: >
+      ⚠️ Repo LICENSE file says MIT but the rendered site/body text carries no
+      inline license statement. Treated as open/citable on the strength of the
+      repo-level LICENSE file (archived to corpus/licenses/12f-LICENSE) —
+      flag for human review before relying on this in a shipped product.
+
+  - id: mcp
+    kind: git
+    repo: https://github.com/modelcontextprotocol/docs.git
+    paths:
+      - docs
+    license: MIT
+    license_tier: open
+    citable: true
+    notes: >
+      ⚠️ Deviates from the original brief in two ways, both confirmed via the
+      GitHub contents API before fetching:
+      (1) no `specification/` path exists in this repo — the versioned spec
+      (2024-11-05, 2025-03-26, ...) lives in the separate
+      modelcontextprotocol/modelcontextprotocol repo under docs/specification,
+      whose repo-level license field reports "NOASSERTION" (unclear), so it
+      was deliberately left out rather than mixed into an `open`/citable
+      source on an unverified license.
+      (2) LICENSE at the pinned commit is plain MIT (copyright Anthropic, PBC),
+      not "MIT migrating to Apache-2.0" as flagged in the original brief —
+      archived to corpus/licenses/mcp-LICENSE.
+      Net effect: this source is thinner than planned (docs/ only, ~9 files:
+      concepts/ + tools/) — flag if the spec text turns out to matter for
+      question generation and revisit sourcing it under its own id later.
+
+  - id: langgraph
+    kind: git
+    repo: https://github.com/langchain-ai/docs.git
+    paths:
+      - src/oss/langgraph
+    license: MIT
+    license_tier: open
+    citable: true
+    notes: ""
+
+  - id: openai
+    kind: git
+    repo: https://github.com/openai/openai-agents-python.git
+    paths:
+      - docs
+    license: MIT
+    license_tier: open
+    citable: true
+    notes: ""
+
+  # ---------------------------------------------------------------------------
+  # html sources (5) — discovery-first, see corpus/tools/fetch.py --discover
+  # ---------------------------------------------------------------------------
+  - id: msio
+    kind: html
+    seed_urls:
+      - https://microservices.io/patterns/index.html
+    allow_path_prefixes:
+      - /patterns/
+    max_depth: 1
+    expected_count_range: [40, 70]
+    license: unknown
+    license_tier: unknown
+    citable: false
+    priority: highest
+    notes: >
+      Highest priority: only other structured pattern-catalog source besides
+      azure. License unconfirmed — footer/copyright/CC-badge check required
+      before deciding citable (task requires a standalone report on this).
+
+  - id: fowler
+    kind: html
+    seed_urls:
+      - https://martinfowler.com/articles.html
+      - https://martinfowler.com/bliki/
+      - https://martinfowler.com/tags/
+    allow_path_prefixes:
+      - /articles/
+      - /bliki/
+      - /architecture/
+      - /microservices/
+      - /testing/
+      - /tags/
+    content_path_prefixes:
+      # /tags/* are pure link-list index pages (per topic and per year) —
+      # needed to crawl through to older entries not linked from the /bliki/
+      # or /articles.html hubs, but not themselves content: excluded here.
+      - /articles/
+      - /bliki/
+      - /architecture/
+      - /microservices/
+      - /testing/
+    max_depth: 2
+    expected_count_range: [150, 600]
+    license: unknown
+    license_tier: unknown
+    citable: false
+    priority: highest
+    notes: >
+      Highest priority alongside msio: main source of prose tradeoff/concept
+      discussion rather than a fixed-section pattern catalog. First
+      --discover pass returned 1094 URLs (flagged: above the [150,600]
+      guess) — broken down, 169 of those were /tags/* index pages (not
+      content) and the remaining 925 (534 bliki + 389 articles + 2 misc) are
+      plausible for a 20+ year, ~900-entry bliki; the original [150,600]
+      guess was just an underestimate, not evidence of a broken selector.
+      Added content_path_prefixes to drop the /tags/* index pages from the
+      final set without losing them as crawl-through hops.
+
+  - id: anthropic
+    kind: html
+    seed_urls:
+      - https://www.anthropic.com/engineering
+      - https://platform.claude.com/docs/en/intro
+    allow_path_prefixes:
+      # full-URL prefixes -> host-specific scoping (see in_scope() in fetch_html.py):
+      # www.anthropic.com restricted to just the engineering blog; the docs
+      # host is *entirely* documentation so it is intentionally left
+      # unrestricted (path-level second cut deferred to the post-probe pass,
+      # same as every other source per task C/D notes).
+      - https://www.anthropic.com/engineering
+      - https://platform.claude.com/docs/en
+    exclude_path_prefixes:
+      # per-endpoint API parameter reference — citable is already false for
+      # this whole source, and reference-table pages are not where
+      # tradeoff/decision prose lives.
+      - /docs/en/api/
+    content_path_prefixes:
+      # platform.claude.com's sitemap lists the SAME docs in 12 locales
+      # (de/en/es/fr/id/it/ja/ko/pt-BR/ru/zh-CN/zh-TW) — a 12x multiplier
+      # that was the real reason the raw count looked huge (2761), not page
+      # count. English only.
+      - /docs/en/
+      - /engineering/
+    max_depth: 2
+    discovery_strategy: sitemap-then-bfs
+    expected_count_range: [null, null]
+    license: unknown
+    license_tier: unknown
+    citable: false
+    priority: normal
+    notes: >
+      Two fixes on top of the original brief, both confirmed by hand before
+      re-running:
+      (1) First --discover attempt (bare "/" prefix on both hosts) had a
+      scoping bug that let the two full site sitemaps through unfiltered
+      (3270 URLs, including all of anthropic.com's marketing/product pages)
+      — fixed by switching allow_path_prefixes to full-URL, host-specific
+      prefixes.
+      (2) docs.claude.com's own sitemap.xml lists URLs under a DIFFERENT
+      host, platform.claude.com (the actual current docs domain — confirmed
+      via curl); crawling docs.claude.com/docs/en/* paths directly hit
+      infinite redirect loops ("Exceeded 30 redirects"), while
+      platform.claude.com/docs/en/intro loads directly with no redirect.
+      Reseeded on platform.claude.com accordingly.
+      (3) Human review of the discover output (2787 URLs) called for a
+      narrower scope before spending the fetch budget: excluded
+      /docs/en/api/ (per-endpoint parameter reference — this source is
+      already citable:false, and reference tables aren't where
+      tradeoff/decision prose lives) and discovered the sitemap lists the
+      SAME docs in 12 locales, an unrelated 12x multiplier — content_path_prefixes
+      narrows the final set to English (/docs/en/) + the engineering blog.
+      Net: 2787 -> ~200, without losing any unique English content.
+
+  - id: aws-wa
+    kind: html
+    seed_urls:
+      - https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.md
+      - https://docs.aws.amazon.com/wellarchitected/latest/operational-excellence-pillar/welcome.md
+      - https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.md
+      - https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.md
+      - https://docs.aws.amazon.com/wellarchitected/latest/performance-efficiency-pillar/welcome.md
+      - https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/welcome.md
+    allow_path_prefixes:
+      - /wellarchitected/
+    require_ext: [".md"]
+    prefer_md_mirror: true
+    max_depth: 4
+    expected_count_range: [null, null]
+    license: unknown
+    license_tier: unknown
+    citable: false
+    priority: normal
+    notes: >
+      First --discover attempt seeded only the combined "framework" guide's
+      welcome.html and got 9 URLs — that page's real nav is JS-rendered, not
+      present in the static HTML, so BFS over <a href> found almost nothing.
+      Fixed by discovering that AWS docs also serve a clean text/markdown
+      mirror of every page at the same path with a .md extension (confirmed
+      via curl), whose body contains ordinary markdown links to sibling
+      pages — fetch_html.py's extract_links() now dispatches to markdown-link
+      parsing for any URL ending in .md/.mdx. Re-seeded with one URL per
+      pillar guide (the "framework" guide covers the overview + the
+      sustainability pillar as a chapter; the other 5 pillars each have their
+      own dedicated guide — confirmed by probing each slug over HTTP).
+      require_ext keeps only .md URLs in the final discovered set even if a
+      page links out to a .html/.pdf variant of itself.
+
+  - id: sre
+    kind: html
+    seed_urls:
+      - https://sre.google/sre-book/table-of-contents/
+      - https://sre.google/workbook/table-of-contents/
+    allow_path_prefixes:
+      - /sre-book/
+      - /workbook/
+    max_depth: 2
+    expected_count_range: [null, null]
+    license: unknown
+    license_tier: unknown
+    citable: false
+    priority: normal
+    notes: "SRE book + workbook tables of contents as seeds."
