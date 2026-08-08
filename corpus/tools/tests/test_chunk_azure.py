@@ -107,11 +107,21 @@ def test_classify_kind_maps_all_configured_prefixes_case_insensitively():
     assert ca.classify_kind("Something else entirely", None) is None
 
 
-def test_classify_kind_recognizes_advantages_as_benefit():
+def test_classify_kind_recognizes_pattern_advantages_as_benefit():
     # FR-008: deviation from DESIGN.md's literal regex, added because the real
-    # corpus has "Pattern advantages" / "Advantages and considerations..."
+    # corpus has "Pattern advantages" — genuinely a benefit-only section.
     assert ca.classify_kind("Pattern advantages", None) == "benefit"
-    assert ca.classify_kind("Advantages and considerations for each strategy", None) == "benefit"
+
+
+def test_classify_kind_does_not_broadly_match_advantages_in_a_mixed_heading():
+    # "Advantages and considerations for each strategy" is a MIXED section —
+    # its body contains real cost/consideration content alongside advantages
+    # (sharding.md, real corpus). A broad `\bAdvantages\b` match would label
+    # the whole section `benefit`, which is exactly the DESIGN.md §9④ failure
+    # mode: a drawback gets cited as an advantage, with a genuine verbatim
+    # excerpt behind it, so the substring check still passes. This must fall
+    # to unmapped instead, surfacing it in the report for a human call.
+    assert ca.classify_kind("Advantages and considerations for each strategy", None) is None
 
 
 def test_context_and_problem_parent_guard_suppresses_tradeoff_kind():
@@ -308,6 +318,68 @@ def test_chunk_id_stable_when_a_new_item_is_inserted_above_an_existing_one():
     id_before = ca.build_chunk_id("cqrs", "cost", ca.slugify(items_before[0].label))
     id_after = ca.build_chunk_id("cqrs", "cost", ca.slugify(items_after[1].label))
     assert id_before == id_after == "azure:cqrs:cost:eventual-consistency"
+
+
+def test_no_chunk_id_is_a_strict_prefix_of_another(tmp_path):
+    # FIX 2 invariant: the earlier incremental disambiguation gave the bare
+    # id to whichever colliding chunk was traversed first, which made that
+    # bare id positional in disguise — an upstream edit could later make it
+    # point at different content. Two sections in the same file that both
+    # produce a whole-section (no bold label) chunk will collide on the same
+    # base slug ("problems-and-considerations" in both) purely because they
+    # share a heading text and kind, not because either was traversed first.
+    text = (
+        "## Solution\n\n"
+        "### First sub-pattern\n\n"
+        "## Problems and considerations\n\n"
+        "- Plain bullet one, no bold label.\n"
+        "- Plain bullet two, no bold label.\n\n"
+        "## When to use this pattern\n\n"
+        "### Problems and considerations\n\n"
+        "- A differently-worded plain bullet under an H3 with the same heading text.\n"
+    )
+    fixture_path = tmp_path / "collision-fixture.md"
+    fixture_path.write_text(text, encoding="utf-8")
+    result = ca.chunk_file(fixture_path, "collision-fixture")
+
+    ids = [c["chunkId"] for c in result["chunks"]]
+    for a in ids:
+        for b in ids:
+            if a != b:
+                assert not b.startswith(a + "-"), f"{a!r} is a strict prefix of {b!r}"
+
+    # Both collide on the same base slug, so BOTH must carry a suffix —
+    # neither gets to keep the bare id "merely" for being emitted first.
+    matching = [i for i in ids if i.startswith("azure:collision-fixture:cost:problems-and-considerations")]
+    assert len(matching) == 2
+    assert "azure:collision-fixture:cost:problems-and-considerations" not in matching
+
+
+# ---------------------------------------------------------------------------
+# FIX 1: contiguous non-labelled bullets stay ONE chunk, never fragment
+# ---------------------------------------------------------------------------
+
+def test_section_with_no_labelled_bullets_produces_exactly_one_chunk(tmp_path):
+    # Motivating real case: docs/patterns/throttling.md's "## Problems and
+    # considerations" has zero bold-labelled bullets — every bullet is plain
+    # prose. FR-009: bullets that don't match the label pattern "MUST remain
+    # part of their parent section's chunk." With nothing extracted, that's
+    # one chunk, not one chunk per bullet.
+    text = (
+        "## Problems and considerations\n\n"
+        "- Make throttling decisions early. Throttling is an architectural decision that affects the whole system.\n"
+        "- Make sure that throttled clients are informed. Return information so a client can determine how much to reduce its rate.\n"
+        "- Track resource use at a level of granularity that makes sense.\n"
+    )
+    fixture_path = tmp_path / "throttling.md"
+    fixture_path.write_text(text, encoding="utf-8")
+    result = ca.chunk_file(fixture_path, "throttling")
+
+    cost_chunks = [c for c in result["chunks"] if c["kind"] == "cost"]
+    assert len(cost_chunks) == 1
+    assert "Make throttling decisions early" in cost_chunks[0]["content"]
+    assert "Track resource use" in cost_chunks[0]["content"]
+    assert cost_chunks[0]["content"] in text
 
 
 # ---------------------------------------------------------------------------

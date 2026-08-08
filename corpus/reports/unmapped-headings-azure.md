@@ -1,6 +1,6 @@
 # Unmapped headings — azure corpus
 
-70 distinct unmapped headings, 167 total occurrences.
+71 distinct unmapped headings, 168 total occurrences.
 
 | heading | occurrences |
 |---|---:|
@@ -70,6 +70,7 @@
 | Range-based sharding strategy | 1 |
 | Hash-based sharding strategy | 1 |
 | Geographic sharding strategy | 1 |
+| Advantages and considerations for each strategy | 1 |
 | Scaling and data movement operations for each strategy | 1 |
 | Lookup shard map | 1 |
 | Add shard instances | 1 |

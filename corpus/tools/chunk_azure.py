@@ -153,7 +153,19 @@ def parse_sections(text: str) -> list[Section]:
 
 _KIND_PATTERNS = [
     ("cost", re.compile(r"^(Problems|Issues|Considerations|Challenges|Limitations)", re.I)),
-    ("benefit", re.compile(r"^Benefits|\bAdvantages\b", re.I)),
+    # "Pattern advantages" is matched explicitly (prefix-anchored, like every
+    # other rule here) rather than a general \bAdvantages\b contains-match.
+    # The corpus has exactly two headings containing that word: "Pattern
+    # advantages" (genuinely a benefit section) and "Advantages and
+    # considerations for each strategy" (a MIXED section — its body contains
+    # real cost/consideration content alongside advantages). A broad match
+    # would classify the whole mixed section as `benefit`, which is exactly
+    # the DESIGN.md §9④ failure mode: a drawback gets cited as an advantage,
+    # with a genuine verbatim excerpt behind it, so the substring check still
+    # passes. The narrower match leaves "Advantages and considerations for
+    # each strategy" unmapped, surfacing it in the report for a human call
+    # instead of silently mislabeling half its content.
+    ("benefit", re.compile(r"^(Benefits|Pattern advantages)", re.I)),
     ("when", re.compile(r"^When to use", re.I)),
     ("example", re.compile(r"^(Example|Next step)", re.I)),
     ("meta", re.compile(r"^(Workload design|Related resources|Contributors)", re.I)),
@@ -166,11 +178,7 @@ def classify_kind(heading: str, parent_h2: str | None) -> str | None:
     governing_h2 = parent_h2 if parent_h2 is not None else heading
     guarded = governing_h2.strip().lower().startswith("context and problem")
     for kind, pattern in _KIND_PATTERNS:
-        # search(), not match(): every pattern still enforces its own `^`
-        # prefix anchor except the `\bAdvantages\b` alternative, which is
-        # deliberately allowed to match anywhere in the heading (e.g. the
-        # real corpus heading "Pattern advantages" — see research.md §6).
-        if pattern.search(heading.strip()):
+        if pattern.match(heading.strip()):
             if guarded and kind in TRADEOFF_KINDS:
                 continue
             return kind
@@ -275,24 +283,33 @@ class Item:
 
 def split_items(body: str) -> tuple[list[Item], list[str]]:
     """Returns (items, remainder_pieces). remainder_pieces is a list, not a
-    single joined string — non-matching bullets (and any other non-item
-    text) may occur in more than one non-adjacent run once matched items are
-    excised, and joining non-adjacent runs together would not be a valid
-    substring of the source (spec FR-009 acceptance scenario 5: kept, never
-    invented text, never merged across a gap)."""
+    single joined string, because non-matching bullets can occur in more
+    than one *non-adjacent* run once matched items are excised from between
+    them — joining non-adjacent runs together would not be a valid substring
+    of the source (spec FR-009 acceptance scenario 5).
+
+    But adjacent non-matching bullets are NOT non-adjacent: a top-level
+    bullet's span already extends all the way to the start of the next
+    top-level bullet (`span_end`), so there is no gap between consecutive
+    bullets to begin with. A run of consecutive non-matching bullets (plus
+    any leading prose before the first bullet) is therefore always
+    contiguous in the source and MUST be emitted as a single piece — only a
+    genuinely matched item, sitting between two such runs, is what actually
+    starts a new, non-adjacent piece. Treating every non-matching bullet as
+    its own piece (an earlier version of this function) over-fragmented
+    sections with no bold labels at all — e.g. throttling.md's "Problems and
+    considerations" (pure prose bullets, zero labelled items) split into 17
+    chunks instead of remaining the single chunk FR-009 requires."""
     matches = list(_TOP_BULLET_RE.finditer(body))
     if not matches:
         return [], ([body] if body.strip() else [])
 
     items: list[Item] = []
     remainder: list[str] = []
+    remainder_start: int | None = 0  # covers any leading prose before the first bullet
     prev_end = 0
 
     for i, m in enumerate(matches):
-        gap = body[prev_end:m.start()]
-        if gap.strip():
-            remainder.append(gap)
-
         span_end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         first_line = m.group(1)
 
@@ -304,18 +321,26 @@ def split_items(body: str) -> tuple[list[Item], list[str]]:
                 break
 
         if matched is None:
-            remainder.append(body[m.start():span_end])
+            if remainder_start is None:
+                remainder_start = m.start()
             prev_end = span_end
             continue
+
+        if remainder_start is not None:
+            piece = body[remainder_start:m.start()]
+            if piece.strip():
+                remainder.append(piece)
+            remainder_start = None
 
         label, offset_in_line = matched
         item_body_start = m.start(1) + offset_in_line
         items.append(Item(label, body[item_body_start:span_end]))
         prev_end = span_end
 
-    tail = body[prev_end:]
-    if tail.strip():
-        remainder.append(tail)
+    if remainder_start is not None:
+        piece = body[remainder_start:prev_end]
+        if piece.strip():
+            remainder.append(piece)
 
     return items, remainder
 
@@ -333,11 +358,52 @@ def build_chunk_id(concept_id: str, kind: str, slug: str) -> str:
     return f"{SOURCE_ID}:{concept_id}:{kind}:{slug}"
 
 
-def _disambiguate(chunk_id: str, content: str, seen: set[str]) -> str:
-    if chunk_id not in seen:
-        return chunk_id
-    suffix = hashlib.sha256(content.encode("utf-8")).hexdigest()[:6]
-    return f"{chunk_id}-{suffix}"
+def finalize_chunk_ids(pending: list[dict]) -> list[dict]:
+    """Assigns final chunkId values from the COMPLETE set of pending chunks
+    for a file, not incrementally as each is produced. An earlier,
+    incremental version gave the bare id to whichever colliding chunk was
+    emitted first and a hash suffix to the rest — which made the bare id
+    positional in disguise: it belonged to whatever was traversed first, not
+    to any particular content. If an upstream edit later split that same
+    section differently (e.g. a directive line landing in the middle of what
+    used to be the first piece), the bare id could end up pointing at
+    different content than it originally held — exactly what FR-005 and
+    spec acceptance scenario 11 forbid, just relocated from "index in
+    document order" to "order of traversal."
+
+    Here, every chunk carries a `baseChunkId`; slugs that occur more than
+    once within the file get a content-hash suffix on EVERY occurrence
+    (including the one that would have been "first"), so the bare id is
+    only ever used when it's genuinely unique. A chunk whose content changes
+    always gets a new id; a chunk whose content is unchanged always keeps
+    the id it already had, regardless of what else in the file changed
+    around it."""
+    counts: dict[str, int] = {}
+    for c in pending:
+        counts[c["baseChunkId"]] = counts.get(c["baseChunkId"], 0) + 1
+
+    finalized: list[dict] = []
+    seen_final_ids: set[str] = set()
+    for c in pending:
+        base_id = c["baseChunkId"]
+        if counts[base_id] > 1:
+            suffix = hashlib.sha256(c["content"].encode("utf-8")).hexdigest()[:6]
+            chunk_id = f"{base_id}-{suffix}"
+        else:
+            chunk_id = base_id
+        # Defensive tiebreaker for the (extremely unlikely) case of two
+        # colliding chunks with byte-identical content, which would hash to
+        # the same suffix: append a counter rather than silently overwrite.
+        if chunk_id in seen_final_ids:
+            n = 2
+            while f"{chunk_id}-{n}" in seen_final_ids:
+                n += 1
+            chunk_id = f"{chunk_id}-{n}"
+        seen_final_ids.add(chunk_id)
+        out = {k: v for k, v in c.items() if k != "baseChunkId"}
+        out["chunkId"] = chunk_id
+        finalized.append(out)
+    return finalized
 
 
 # --- FR-013 / FR-013a: contextual prefix ------------------------------------
@@ -360,10 +426,9 @@ def chunk_file(path: Path, concept_id: str, source_url: str = "", citable: bool 
 
     sections = parse_sections(text)
 
-    chunks: list[dict] = []
+    pending_chunks: list[dict] = []
     unmapped_headings: list[str] = []
     related_targets: set[str] = set()
-    seen_ids: set[str] = set()
 
     for section in sections:
         heading = section.heading
@@ -389,11 +454,9 @@ def chunk_file(path: Path, concept_id: str, source_url: str = "", citable: bool 
                 if not content:
                     continue
                 slug = slugify(label)
-                chunk_id = _disambiguate(build_chunk_id(concept_id, kind, slug), content, seen_ids)
-                seen_ids.add(chunk_id)
-                chunks.append(
+                pending_chunks.append(
                     {
-                        "chunkId": chunk_id,
+                        "baseChunkId": build_chunk_id(concept_id, kind, slug),
                         "patternId": concept_id,
                         "kind": kind,
                         "label": label,
@@ -418,7 +481,7 @@ def chunk_file(path: Path, concept_id: str, source_url: str = "", citable: bool 
             _emit(heading, section.body)
 
     return {
-        "chunks": chunks,
+        "chunks": finalize_chunk_ids(pending_chunks),
         "unmapped_headings": unmapped_headings,
         "related_targets": related_targets,
         "display_name": display_name,
