@@ -155,13 +155,22 @@ __pycache__/
 # uv.lock and .python-version ARE committed (reproducibility, same reasoning as
 # package-lock.json) - not listed here on purpose
 
-# AI tooling scaffolding - kept locally for the dev workflow, not tracked in git.
-# .specify/memory/constitution.md is the one intentional exception (kept tracked -
-# governance/principles doc, not scaffolding).
-.claude/
+# AI tooling. Machine-local state stays untracked; workflow *definitions* are
+# tracked, because .specify/memory/constitution.md cites them by path as
+# authoritative and Principle III mandates the commands they implement - a repo
+# that references them without shipping them is referencing files that do not
+# exist. See docs/DECISIONS.md.
+#
+# Tracked:   .claude/skills/, .specify/memory/constitution.md, .specify/templates/
+# Untracked: editor/machine settings, worktrees, CLAUDE.md (its content is already
+#            covered by constitution.md and docs/DESIGN.md), and per-feature
+#            tasks.md / checklists (internal implementation checklists by design).
+.claude/*
+!.claude/skills
 CLAUDE.md
 .specify/*
 !.specify/memory
+!.specify/templates
 .specify/memory/*
 !.specify/memory/constitution.md
 specs/*/tasks.md
