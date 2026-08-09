@@ -251,3 +251,218 @@ happened after the spec was written rather than before it.
 **Status**: active
 **Source**: `specs/005-corpus-ingest-foundation`'s review process (`research.md` §6,
 `checklists/requirements.md`'s correction-pass notes)
+
+## 2026-08-09 — `doc_chunk` granularity is a frozen contract; three schema additions
+
+**Decision**: chunk granularity — one chunk per classified H2/H3 section, or per labelled
+item within a cost/benefit/when section — is a fixed contract that future sources adapt to,
+not a parameter revised per source. A new source type gets a new *preprocessing method* that
+must produce chunks satisfying the same contract; it does not get its own granularity, and
+it does not get a parallel database. All methods write to the same `doc_chunk` table and are
+distinguished by `kind_confidence` (`regex | llm | manual`).
+
+Three changes follow from freezing it, since anything not decided now becomes a migration
+plus a full re-ingest later:
+
+1. Add `parentChunkId` (nullable). The parent section is known for free at chunk time. Add
+   the column, but do **not** wire it into retrieval — the small-to-big retrieval pattern it
+   would enable presupposes vector search over chunks, and retrieval is an exhaustive
+   `pattern_id` lookup (DESIGN.md §8). It is stored to keep the option open, not to be used.
+2. Add `sourceOffset` and `sourceLength`. Verified against the real corpus: all 425 chunks
+   are single contiguous spans of their source file, so an offset pair describes each chunk
+   exactly. This upgrades "content is a literal substring" from a substring search to a
+   byte-range comparison, and it is the only mechanism that makes coverage, overlap and gaps
+   computable once more than one chunking method writes to the table.
+3. Remove the `unmapped` value from the `ChunkKind` enum — see the next entry.
+
+**Why**: the "granularity is a fixed contract" framing came from the project owner and is
+stronger than what DESIGN.md states. It makes the downstream shape — what `retrieve` returns,
+what `generate` consumes — stable by construction, and it matches how the schema was already
+written: `DocChunk` has no source-type-specific fields, and `kind_confidence` already assumes
+granularity is universal while method varies.
+
+**Known limitation, recorded rather than fixed**: 34 of the 60 `when`-kind chunks (57%)
+contain "this pattern might not be suitable when" material, which is semantically *cost*
+content stored under `when` because that is the heading it sits under — the same mixed-section
+hazard DESIGN.md §9④ describes. It surfaced during the generation experiments below, where a
+`cost` claim was correctly supported by a verbatim excerpt drawn from a `when`-kind chunk.
+`kind` therefore describes where text came from, not what it may support.
+**Status**: active
+
+## 2026-08-09 — Unclassified sections are not stored; "no data loss" is guaranteed at the source layer
+
+**Decision**: sections matching no `kind` rule are not written to `doc_chunk`. They split into
+two buckets — discarded (one-off implementation headings: function names, flow steps,
+deployment-specific titles) and retained (headings whose content is worth revisiting,
+principally `Solution` and `Context and problem`). The retained bucket is a lightweight list
+(heading, file, occurrence count), a separate artifact from `doc_chunk`, with no `content` and
+no `chunk_id`. Since neither bucket produces a `doc_chunk` row, the `unmapped` enum value is
+removed.
+
+**Why**: `specs/005`'s US2 acceptance scenario 1 required unclassified sections to be "still
+stored ... rather than silently dropped", and `unmapped` was that requirement's
+implementation. But it conflated two things: *"don't silently drop"* is a visibility
+guarantee, while *"store it in the table"* is a storage mechanism. The guarantee already lives
+one layer down.
+
+The corpus has three layers, and each guarantee belongs to exactly one:
+
+* **Source layer** (`corpus/sources.yaml` pinned to a commit, plus a sha256 per file in
+  `corpus/_meta/manifest/`) — the raw text is byte-for-byte reproducible and verifiable.
+  *"Nothing is lost"* lives here.
+* **Report layer** (`corpus/reports/unmapped-headings-*.md`) — you know what was not
+  classified. *"Loss is visible"* lives here.
+* **Chunk layer** (`doc_chunk`) — classified material is retrievable. *"Usable"* lives here.
+
+Storing unclassified content in `doc_chunk` puts the source layer's guarantee in the chunk
+layer, where it does not belong — and it would not even be reusable, since a future
+prose-handling method would re-split a 3,000-word `Solution` section by paragraph, leaving
+section-level rows stored now unused.
+
+**Consequence worth noting**: with `sourceOffset`/`sourceLength` stored (previous entry), how
+much of a file remains unclaimed is computable from the database alone — file length from the
+manifest, minus the sum of claimed spans. Storing the unclaimed text is not needed in order to
+know how much of it there is.
+**Status**: active
+
+## 2026-08-09 — Heading classification: an LLM authors a committed mapping table, and is not part of the pipeline
+
+**Decision**: replace the hardcoded `kind` regex list with a committed `heading → kind`
+mapping table. The table is authored with LLM assistance over the corpus's distinct heading
+set, reviewed by a human, and committed. Ingest reads the table and makes no LLM call. Each
+row records its origin (`regex | llm | manual`), matching `kind_confidence`, so an LLM-derived
+subset can be re-reviewed later without a full re-run; manual entries take precedence over
+generated ones.
+
+**Why**: extending the regex list was heading toward a hand-maintained synonym dictionary.
+`Drawbacks` is plainly a `cost` synonym the current rules miss, and every new source brings
+its own vocabulary — precisely the "endlessly adapting non-LLM methods to every document type"
+trap this project decided not to enter. Frequency offers no shortcut either: a one-occurrence
+heading turned out to be `Drawbacks` while a 43-occurrence one is `Solution`, so no count-based
+rule separates signal from noise.
+
+An LLM is the right tool for *semantic classification* and the wrong tool for *boundaries*.
+Boundaries must be reproducible because verbatim verification depends on them, and a drifting
+boundary fails silently (DESIGN.md §7.6); a wrong label is caught by spot-checking twenty rows.
+So rules decide where text is cut, an LLM decides what the resulting section is called, and
+that decision is frozen into a reviewed file rather than recomputed per run. This keeps the
+"human occupies the admission slot, never the data-entry slot" shape of DESIGN.md §9① — the
+same pattern already used for concept candidates.
+
+**Scope**: because the artifact is a static committed file, how it is authored is not
+architecturally constrained and no tool needs to exist yet. If a classifier script is later
+added under `corpus/tools/`, it would open a second LLM call site and would need reconciling
+with Principle IV and DESIGN.md §4.5's "all LLM calls converge on a single `llm.py`" —
+deliberately deferred, since the current approach creates no such call site.
+**Status**: active
+
+## 2026-08-09 — The `Item` model, settled by three hand-run generation experiments
+
+**Decision**: DESIGN.md §13's open decisions #4 and #5 — which it marks as blocking all of P0
+— are settled by experiment rather than on paper. Three generations were run against real
+chunks from the ingested corpus, with a deliberately under-specified output schema so that
+whatever the model reached for would be visible. The resulting `Item` shape:
+
+```
+scenario                      form layer, freely constructed
+question                      the prompt the candidate sees
+options[]
+  benefit / cost / when_to_choose
+    text                      paraphrase
+    verbatim                  character-for-character source excerpt
+    chunk_id
+    strength                  direct | weak | null
+answer_key                    form layer, no verbatim required
+  preferred_option
+  reasoning
+gaps[]                        { option, field, reason }
+```
+
+`answer_key` is new, and belongs to the **form layer**. DESIGN.md §4.4 already presupposes a
+correct answer exists — "the numbers you construct must support the reasoning behind the
+correct answer" — but gave it no field, so the model invented one in all three runs and filled
+it with unsourced assertions that no constraint applied to. Classifying it as form layer is the
+honest resolution: the scenario is constructed, so which option wins *within that constructed
+scenario* is equally constructed. It must be visibly marked as such in any interface, because
+the sourced and constructed parts of an answer have to stay distinguishable to a reader —
+especially once a follow-up conversation extends beyond the sourced material.
+
+**Wording that must not be misread**: benefit, cost and when_to_choose are each independently
+*verifiable* claims, but they are **generated together and verified separately**. Generating
+them separately would violate DESIGN.md §12 #5 — the three must be mutually self-consistent,
+and splitting the generation manufactures contradictions.
+
+**Why — what the experiments showed**
+
+*Grounding holds.* Across the three runs, 15 of 15 non-null citations verified mechanically:
+every cited `chunk_id` exists, and every `verbatim` is a literal substring of the chunk it
+cites. Zero fabrications.
+
+*The "leave it null" rule fires.* Three fields had genuinely zero material — both `benefit`
+fields in the throttling / queue-based-load-leveling run, and `when_to_choose` for
+microservices. All three came back null with a `gaps` entry stating why. In the first of those
+runs that meant a third of the answer key was left deliberately empty, and the model still did
+not force a fit or fall back on its own knowledge. This is the guarantee the product rests on
+and it had never been exercised: the first experiment had 37 chunks available and filled every
+field, so the rule was never reached.
+
+*The schema has to be pinned.* Left under-specified, the same need produced three different
+shapes across three runs: `recommended_option` plus `decision_rationale`; then
+`answer_key { preferred_option, reasoning }`; then nothing at all, with `question` omitted too.
+Nothing downstream can consume that.
+**Status**: active
+
+## 2026-08-09 — `combine` must assemble mutually exclusive options; `related` edges do not
+
+**Decision**: the `combine` step (DESIGN.md §4.2 ③) cannot use a concept's `related` edges to
+assemble the options of a decision question. It needs a separate notion of "alternative to",
+distinct from "related to". How that gets represented is not yet decided.
+
+**Why**: `related` is populated from links the source documents make to one another, which
+records that two concepts are *mentioned together* — not that either substitutes for the
+other. Walking those edges from `cqrs` yields `event-sourcing`, and the two are complementary,
+routinely used together. The generation experiment on that pair produced a question whose own
+answer key observed that "CQRS could subsequently be combined with it" — the model noticed it
+was not actually being asked to choose. Both options' costs also reduced to eventual
+consistency, leaving no tension to reason about.
+
+The contrast is sharp: the same prompt over `microservices` vs `n-tier` — genuinely mutually
+exclusive architecture styles — produced real tension, with a six-person team, a four-month
+migration deadline, and one subsystem expecting disproportionate traffic pulling migration cost
+and targeted scalability in opposite directions.
+
+**Observation to carry forward**: the six architecture-style documents are mutually exclusive
+by nature, and are also among the few concepts with complete benefit/cost/when material. They
+are the natural source of the first genuinely good questions, independently of how "alternative
+to" is eventually modelled.
+**Status**: active
+
+## 2026-08-09 — The question is the scarce artifact; the cold reader becomes a core metric
+
+**Decision**: the system's centre of value is *question generation*, not answer generation. The
+sourced answer key is provided as completely as the corpus allows, and a follow-up conversation
+may go beyond it — consulting the index first, then answering freely when the index holds
+nothing. Free-form answers must be visually distinct from sourced ones, and are excluded from
+answer records and diagnostics.
+
+Consequently the "cold reader" (DESIGN.md §6, currently P3) is promoted from optional
+experiment to core evaluation metric: generate an answer with no retrieved material and compare
+it against the grounded version. If they are materially the same, retrieval added nothing for
+that question — and the question was not worth generating.
+
+**Why**: a general model already answers most interview questions competently. The asymmetry is
+not capability but *verifiability*. A learner can defend themselves against a wrong answer —
+cross-check it, ask a follow-up, look it up. They cannot defend themselves against a wrong
+*question*, because the question is what defines what they believe they should know. Grounding
+therefore belongs on the question side, and that is exactly what the corpus investment buys.
+
+This also reorders evaluation priorities. DESIGN.md's evaluation focus is answer-side
+(citation correctness, entailment). Under this positioning what needs measuring is the
+question's own worth — does it encode a real tradeoff, and does retrieval measurably improve it
+— and the cold reader is the instrument for that.
+
+**Guard rail**: DESIGN.md §0 explicitly warns against restating the positioning as "this is just
+a learning tool", and against dropping the data-model fields that support competence assessment
+(observable difficulty dimensions, question versioning, full answer context). Framing the
+question as an entry point to learning must not become a licence to drop those.
+**Status**: active
