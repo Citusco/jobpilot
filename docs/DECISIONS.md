@@ -466,3 +466,491 @@ a learning tool", and against dropping the data-model fields that support compet
 (observable difficulty dimensions, question versioning, full answer context). Framing the
 question as an entry point to learning must not become a licence to drop those.
 **Status**: active
+
+## 2026-08-10 — The `kind` subsystem is abolished; every section is stored
+
+**Decision**: remove heading-based `kind` classification entirely — the `ChunkKind` enum, the
+`KindConfidence` enum, the regex list in `corpus/tools/chunk_azure.py`, the planned committed
+`heading → kind` mapping table, and the discard/retain triage of unmapped headings. Every
+section of every admitted document is chunked and stored. Nothing is filtered at ingest on the
+basis of what its heading is called.
+
+**Supersedes**:
+
+* *2026-08-09 — Unclassified sections are not stored* — fully. Unclassified sections are now
+  stored, because the category "unclassified" no longer exists.
+* *2026-08-09 — Heading classification: an LLM authors a committed mapping table* — fully. The
+  mapping table was a better way to do classification; classification itself is what is
+  removed, so no table is authored and no second LLM call site is opened.
+* *2026-08-08 — Chunk to H3, not just H2* — partially. Chunking on both `##` and `###` with
+  code fences protected stands. The `kind` regex classification and the restriction of
+  item-level splitting to cost/benefit/when sections do not.
+* *2026-08-09 — `doc_chunk` granularity is a frozen contract* — partially. Granularity as a
+  fixed contract that new sources adapt to stands, as do `sourceOffset`/`sourceLength`. "One
+  chunk per *classified* section" does not.
+
+**Why**: the filter was measured against the full Azure corpus and discards more than it keeps.
+
+```
+Full body text                  765,276 chars
+  kept by the kind filter       206,217   (27%)
+  dropped by the kind filter    529,808   (69%)
+  headingless preamble           29,251   ( 4%)   — see the next entry
+
+Largest single discards:  Solution 119,588 · Example 114,142
+                          Workload design 71,531 · Context and problem 51,781
+```
+
+Volume alone would not settle it. What settles it is that the discarded text contains the
+material the pipeline then reports as missing. Experiment 5 re-ran Experiment 2 — same two
+concepts (`throttling`, `queue-based-load-leveling`), same prompt, one variable changed: all 18
+sections of both documents supplied as `headingPath + content`, with no `kind` label and no hint
+that anything was absent. Experiment 2 had declared benefit gaps for both concepts and was
+recorded as evidence that the leave-it-null rule worked. Experiment 5 returned `gaps: []`, filled
+both benefits, and all six verbatim excerpts verified against the source.
+
+The benefit statements were in the `Solution` sections both times — a heading the regex list does
+not recognise, so the text never reached the model. Experiment 2's "correct" gap detection was an
+artifact of Experiment 2's own filter. This also corrects the claim recorded in *2026-08-09 — The
+`Item` model* that three fields had genuinely zero supporting material; two of those three did
+have material, hidden by the filter.
+
+The failure mode generalises past this one filter: **anything that decides what the model may see
+before the model sees it can manufacture a false absence, and does so without raising an error.**
+The pipeline cannot distinguish "the corpus lacks this" from "we hid it," and `gaps` — a
+first-class corpus-growth signal per the 2026-08-08 entry — is exactly the output that gets
+corrupted.
+
+`kind` is not preserved as a display label either. `headingPath`'s last element ("Problems and
+considerations") carries more information than the enum value (`cost`) it would replace, so the
+enum is subsumed rather than sacrificed.
+**Status**: active
+
+## 2026-08-10 — Headingless preamble text was never ingested at all
+
+**Decision**: chunking must cover the text before a document's first `##`/`###` heading. It
+becomes a chunk whose `headingPath` is the document title alone.
+
+**Why**: measured across the 49 Azure pattern documents, **49 of 49** have text between the H1 and
+the first H2, totalling 29,251 characters. The chunker iterates over heading matches, so this text
+never entered the loop — and because the unmapped-headings report is keyed on headings, text with
+no heading did not appear there either. It was invisible to both the pipeline and its own
+loss-reporting.
+
+This is a stricter failure than the `kind` filter. That filter dropped text but recorded the
+heading it dropped; this dropped text and recorded nothing. The three-layer guarantee from
+*2026-08-09 — Unclassified sections are not stored* claimed "loss is visible" lives in the report
+layer, and for this text it did not.
+
+The preambles are also not incidental — they hold the concept definitions. `cqrs`'s begins
+"Segregate the read and write operations for a data store into separate data models…", which is
+the single most useful sentence in the document for the concept-index product below.
+**Status**: active
+
+## 2026-08-10 — Structure-first, size-bounded hierarchical chunking
+
+**Decision**: the chunking contract becomes:
+
+1. Split on document structure — H1 title, then `##`/`###` sections, code fences protected.
+   Preamble text is a section under the title alone.
+2. Each chunk carries `headingPath` (`["CQRS", "Solution", "Benefits of CQRS"]`), replacing both
+   `label` and `contextPrefix`.
+3. A section whose body exceeds the size cap splits into child chunks — on bullet items where the
+   body is a list, otherwise recursively at paragraph boundaries. Children carry `parentChunkId`;
+   parents carry `null`.
+4. Size bounds are enforced as a cap and a floor, both with recorded rationale (next entry).
+5. `headingPath` is prepended to the text sent to the embedding model. It is **not** concatenated
+   into the stored `content` column.
+
+**Why**: point 5 is the one most likely to be "optimised" away later, so the reason is recorded
+here. A chunk embedded on its own body alone loses its anchor — the bullet "Message queues are a
+one-way communication mechanism" embeds as a generic fact about message queues, not as a cost of
+Queue-Based Load Leveling. Prepending the heading path pulls the vector back to the concept it
+belongs to. It is a deterministic, zero-cost version of what Contextual Retrieval spends an LLM
+call per chunk to produce; for structured documents the heading path already carries most of that
+information. This is worth re-evaluating only for prose sources with no reliable heading
+structure.
+
+Keeping the prefix out of `content` is equally deliberate: SCRUM-42 shipped a bug where the
+contextual prefix was concatenated into `content`, which breaks `content.includes(verbatim)`
+against the true source text.
+
+**Cost**: ~425 chunks / 347 KB today becomes an estimated ~600 chunks / 710 KB — a 2x increase on
+a base small enough that it does not matter. Storage is not a constraint at this scale; embeddings
+are what grow (see two entries down).
+**Status**: active
+
+## 2026-08-10 — The size cap exists to prevent dilution, the floor to prevent loss of anchoring
+
+**Decision**: record the reasons for both bounds, because a size limit with no recorded rationale
+gets treated as an arbitrary number and tuned away.
+
+**Cap — semantic dilution.** An embedding model returns exactly one vector per input, regardless
+of input length: per-token vectors exist inside the network but are pooled into a single output.
+A chunk covering three topics therefore produces one point that is near none of them, and it will
+not be retrieved by a query about any of them.
+
+**Explicitly not the reason**: the model's own limit. `text-embedding-3-small` accepts 8,191
+tokens ≈ 32,000 characters; the largest section in the corpus is roughly 5,000 characters. Citing
+the model limit as the justification would be checkable and false, and would invite removing the
+bound.
+
+**Floor — loss of anchoring.** Below some size a fragment stops carrying enough context for its
+vector to mean anything. `headingPath` prefixing (previous entry) mitigates this, which is why the
+floor can be set lower than it otherwise could.
+
+**Secondary, real**: citation granularity. A large chunk makes `verbatim` point into a large blob,
+so the cold reader has to hunt for the sentence, and the entailment check gets a larger haystack.
+**Status**: active
+
+## 2026-08-10 — The concept point cloud is the first product surface; question generation is deferred, not dropped
+
+**Decision**: the first thing built on the corpus is a navigable concept map, not question
+generation. Given a JD, render the concept graph with per-concept relevance shown as node colour,
+concepts the corpus knows but has no material for shown as grey nodes, and drill-down in two
+directions: into a concept's source sections, and outward to its related concepts. Question
+generation, the `Item` model, entailment verification and the fact/form layer split are unchanged
+and remain the intended direction — they are sequenced later, and the data model must not
+foreclose them.
+
+**Why**: the point cloud ships on what already exists (49 concepts, 43 of them with `related`
+edges, 425 chunks) and needs none of generation quality, answer keys or entailment checking. More
+importantly it makes corpus coverage the product's visible surface rather than a hidden failure.
+Experiment 4 fed four real AI-engineering JDs through extraction and matched **0 of 93** extracted
+items against the 49 Azure architecture concepts. As a question generator that is an embarrassing
+empty result; as a concept map it is the correct output — a sparse, mostly grey cloud truthfully
+reporting that this corpus does not cover these roles. That is DESIGN.md §7.8's stated goal
+("know what isn't covered") made visible.
+
+**Measured graph structure** (49 concepts):
+
+```
+72 undirected edges, mean degree 2.9      sparse enough to lay out legibly
+one 42-node component + 7 isolates
+83 directed pairs: 22 mutual, 61 one-way  `related` reflects what each document linked to,
+                                          not a mutual relationship
+34 dangling references to 20 concepts     e.g. messaging, caching, ci-cd,
+                                          high-performance-computing
+```
+
+Three consequences:
+
+* The 20 dangling targets become `Concept` rows with `status = candidate` and
+  `hasCorpus = false` — the "known but no material yet" state the two-table model was designed
+  for (2026-08-08). They render as grey nodes, and connecting them rescues 3 of the 7 isolates
+  (`big-compute`, `cache-aside`, `big-data`). The remaining 4 have no `related` entries at all.
+* Edge strength does not exist in the data — `related` is a boolean string array. Mutual versus
+  one-way is a free, weak signal available now; concept-to-concept embedding similarity is the
+  richer one.
+* No taxonomy is built. The "parent node" in the mock-up is whichever node currently has focus,
+  as in a focus-plus-context local graph. An intrinsic hierarchy (style → pattern → variant)
+  would be new hand-curated data and falls under hard constraint 7.
+
+**Blocking gap**: `concept.aliases` is empty for all 49 rows. It was previously "resolve's first
+tier misses"; as the product's entry point it is now the accuracy floor — a JD saying "message
+queue" has to reach `queue-based-load-leveling`.
+**Status**: active
+
+## 2026-08-10 — Embedding is concept-level only; the chunk-level column is built but left unfilled
+
+**Decision**: compute and store embeddings for `Concept` rows (~49 admitted + ~20 candidate ≈ 70
+vectors). Add `embedding vector(1536)` to `DocChunk` in the same migration but populate no values.
+Retrieval of a concept's chunks stays an exhaustive `pattern_id` lookup returning every chunk in
+document order.
+
+This amends rather than supersedes *2026-08-08 — Vector search only at `resolve`, never at
+`retrieve`*: `retrieve` still has no vector component, but concept-level vectors now serve three
+uses instead of one.
+
+```
+1. JD item → concept relevance      node colour in the point cloud
+2. concept → concept similarity     edge strength / layout distance
+3. neighbours for isolated nodes    the 4 concepts with no `related` entries
+```
+
+All three are concept-level. 70 vectors is roughly 4,900 pairwise comparisons — computed per
+request, not stored.
+
+**Why no chunk-level values**: retrieval is compression, and there is nothing to compress. A
+concept's entire material averages ~14,800 characters ≈ 3,700 tokens against a generation budget
+above 128,000. Experiment 5 supplied everything for two concepts and it worked. Beyond being
+unnecessary, top-k chunk retrieval is structurally the same operation as the `kind` filter
+abolished above — it decides what the model may see before the model sees it, returns k results
+regardless of whether any are relevant, and fails silently.
+
+**Trigger for chunk-level retrieval**: a single concept's total chunk text exceeds the generation
+context budget, or full-material cost becomes unacceptable. Note that the driver is *sources per
+concept*, not corpus size — one document about CQRS stays one document's length no matter how many
+unrelated sources are added; what grows is the same concept being covered by several sources.
+
+**Two conditions must be met before it is enabled**: an evaluation instrument capable of detecting
+"material that should have been supplied was not" (without it, the Experiment 2 failure mode is
+reinstalled and undetectable), and a threshold calibrated against positive/negative baselines per
+DESIGN.md §8. The small-to-big pattern that `parentChunkId` enables is deferred to the same
+trigger.
+**Status**: active
+
+## 2026-08-10 — Reversibility decides what must be settled now
+
+**Decision**: at this stage, settle only decisions that are expensive to reverse. Everything else
+is deliberately left as a nullable column, an unpopulated value, or an absent table.
+
+```
+Expensive   concept_id                      already a hard constraint (2026-08-08)
+Expensive   chunk_id scheme + granularity   the target of every verbatim citation and,
+                                            later, of answer records
+Cheap       adding a nullable column        additive migration
+Cheap       computing embeddings            ~70 vectors in seconds
+Cheap       edge weights                    computed per request, never stored
+```
+
+**Why**: the raw corpus is committed under `corpus/raw/` with a per-file sha256 in
+`corpus/_meta/manifest/`, so re-ingest is always available and "not stored in the database" never
+means "lost". That safety net does not extend to identifiers, because changing an id breaks
+references held outside the ingest pipeline — foreign keys today, stored citations and answer
+records later. Identifiers are therefore the only category that must be right the first time.
+
+**Deferred on this basis, with no cost to deferring**: chunk-level embedding *values*, the `Item`
+model and answer-record tables, a materialised concept-edge-weight table, persistence of JD
+analysis results, and any intrinsic concept taxonomy. Each is purely additive and touches no
+existing identifier.
+
+## 2026-08-10 — `concept_terms` replaces `Concept.aliases`; tier-1 resolution is unique by construction
+
+**Decision**: drop `Concept.aliases String[]` and add a `ConceptTerm` table. Every string that can
+identify a concept — its `conceptId`, its `name`, and each authored alias — becomes one row in a
+single column, and that column is the primary key.
+
+```prisma
+enum TermType { id name alias }
+
+model ConceptTerm {
+  term        String   @id                    // normalized
+  displayTerm String   @map("display_term")   // as authored, for display and audit
+  conceptId   String   @map("concept_id")
+  termType    TermType @map("term_type")
+
+  concept Concept @relation(fields: [conceptId], references: [conceptId], onDelete: Cascade)
+
+  @@index([conceptId])
+  @@map("concept_terms")
+}
+```
+
+Tier-1 resolution becomes `SELECT concept_id FROM concept_terms WHERE term = $1` — one primary-key
+lookup, no array scan, no `ANY()`.
+
+**Why a table rather than a validated array**: the rule "an alias may not equal any concept's id or
+name" is a cross-row constraint, and Postgres `CHECK` cannot express one. Written as application
+logic it is a step someone can forget, skip, or regress. Written as a primary key over a shared
+namespace it cannot be violated at all — an alias colliding with another concept's name is simply
+a duplicate key, and ingest fails.
+
+**Consequences that must be implemented deliberately**:
+
+* **Normalization has exactly one implementation.** `normalizeTerm()` — lowercase, collapse
+  non-alphanumerics to single spaces, trim — is used both when writing terms and when querying
+  them. Two implementations that drift produce lookups that silently return nothing. Both call
+  sites are TypeScript (ingest and resolve), so this is one function in one place; it is a
+  concrete reason resolve stays on the NestJS side of the boundary.
+* **Within a concept, collisions are silently deduplicated; across concepts they are fatal.**
+  Almost every concept's id and name normalize to the same term (`cqrs` / `CQRS`,
+  `circuit-breaker` / `Circuit Breaker`), so intra-concept collision is the normal case, not an
+  error. Precedence is `id` > `name` > `alias`.
+* **Ingest reports all collisions before failing**, rather than stopping at the first.
+* **The rule is enforced across the whole authored file, not against existing database state.**
+  Ingest is idempotent and rebuilds `concept_terms` from `candidates/*.jsonl` on every run, so
+  collision detection must not depend on insertion order or on rows left over from a previous run.
+* A Jest test asserts term uniqueness over the candidate files directly, giving feedback without a
+  database. The primary key remains the backstop: a test can be skipped or deleted, a constraint
+  cannot.
+
+**Reversibility**: `term` is a derived value with no external references, so a change to
+normalization simply regenerates the table. This is why it can be a primary key while
+`concept_id` and `chunk_id` are frozen — see the reversibility entry above.
+**Status**: active
+
+## 2026-08-10 — Tier 1 resolves to exactly one concept; ambiguity belongs to tier 2
+
+**Decision**: an alias maps to exactly one concept. Where a phrase genuinely refers to more than
+one concept, the additional concepts are surfaced by tier-2 vector similarity and by `related`
+edges, not by multi-mapping the alias.
+
+**Why**: this was briefly considered the other way — letting one alias light up several nodes in
+the point cloud looked like the more informative behaviour. It is the wrong layer. DESIGN.md §8's
+principle is that ambiguity should be concentrated where it can be reasoned about; tier 1 exists
+precisely to be exact and deterministic, and making it multi-valued removes the one place in
+resolve that cannot be wrong.
+
+**Worked example, measured rather than assumed**. `throttling` and `rate-limiting` are separate
+concepts in the corpus, and checking their definitions showed they are not duplicates — they are
+opposite sides of one interaction:
+
+```
+Throttling     server side.  "Limit the resources that an application instance, an
+                              individual tenant, or an entire service can consume."
+Rate Limiting  client side.  "Control the rate at which your application sends requests
+                              to a service so that you stay within the service's
+                              throttling limits"
+```
+
+The `rate-limiting` document links to `throttling` inside its own definition, and the two are
+already joined by a `related` edge.
+
+Colloquially, though, "rate limiting" usually means what Azure calls Throttling. So a JD saying
+"implement rate limiting on our API" will match `rate-limiting` exactly, at tier 1, with no vector
+call and no threshold — and be wrong. **An exact match that is confidently wrong is worse than a
+miss**, because a miss falls through to the later tiers and this does not.
+
+Two things follow:
+
+1. The primary-key constraint is doing more than preventing duplicates. It prevents a real
+   ambiguity from being *hidden* — allowing "rate limiting" as an alias of `throttling` would
+   erase the distinction from the data, where no one would ever see it again. Failing at ingest
+   forces the ambiguity to be confronted.
+2. This is a further argument for sequencing the point cloud ahead of question generation. Question
+   generation must pick one concept and a wrong pick silently corrupts the question. The point
+   cloud does not pick: tier 1 lights `rate-limiting`, tier 2 and the `related` edge light
+   `throttling`, and the user reads both and learns the distinction. The ambiguity becomes
+   information instead of an error.
+
+**Authoring consequence**: alias drafting must receive each concept's definition sentence and its
+`related` ids, not just its name. Given names alone, "rate limiting" as an alias of `throttling` is
+the answer any model — or person — would give.
+**Status**: active
+
+## 2026-08-10 — `chunk_id` scheme: heading path for sections, content hash for sub-splits
+
+**Decision**: with `kind` removed from the identifier, the scheme becomes
+
+```
+section chunk   {source}:{concept}:{heading-path-slug}
+                azure:cqrs:solution--benefits-of-cqrs
+
+split child     {source}:{concept}:{heading-path-slug}:{content-sha8}
+                azure:cqrs:solution--benefits-of-cqrs:a3f21b09
+```
+
+The existing numeric disambiguation suffix for duplicate slugs within a concept is retained.
+Every current `chunk_id` changes as a result. That is acceptable exactly once — nothing outside
+the ingest pipeline references them yet — and this is the last time it may happen.
+
+**Why the child uses a content hash rather than an ordinal**: `specs/005` FR-005 already required
+ids to be label-derived rather than positional. A section split at paragraph boundaries has no
+label to derive from, leaving two options:
+
+```
+ordinal   text is inserted upstream, every later child shifts
+          → the id survives but now denotes different text     → silent error
+hash      the text changes, the id changes
+          → the citation breaks visibly                        → explicit error
+```
+
+An id that stays stable while the text under it changes is worse than an id that breaks, because
+a stored citation or answer record would keep pointing at it and quietly mean something else. The
+same reasoning runs through hard constraints 1, 3 and 6.
+
+Sections keep a heading-derived id because a heading is a stable, meaningful anchor in the
+document's structure; sub-splits have no such anchor and fall back to their own content. Each
+level uses the most stable identifier available to it.
+**Status**: active
+
+## 2026-08-10 — Terms are extracted mechanically; hand-authored aliases are deferred until measured
+
+**Decision**: `concept_terms` is populated entirely by rule at ingest, with no hand annotation:
+
+```
+conceptId                       throttling
+name                            Throttling
+H1 / frontmatter title          Throttling pattern
+name with/without the "pattern" suffix
+```
+
+Hand-authored aliases are removed from the near-term plan. They are added later, only for
+categories that a measurement shows tier-2 vector resolution actually fails on.
+
+**Supersedes** the "Blocking gap" paragraph of *2026-08-10 — The concept point cloud is the first
+product surface*, which called empty `aliases` "the accuracy floor". That was overstated. The
+system resolves without any aliases at all — a term-table miss simply falls through to vector
+similarity. Aliases are an optimisation that converts a probabilistic match into a deterministic
+one; they are not a prerequisite.
+
+**Why**: the plan had reached "hand-write roughly 200 aliases" without anyone testing whether
+vector-only resolution is adequate. That is the same mistake as the abolished heading mapping
+table — reaching for per-vocabulary manual annotation before establishing that the automatic path
+is insufficient — and it contradicts the measurement-first discipline recorded on 2026-08-08.
+
+**The measurement that gates the work**: run real JD items through vector-only resolve and record
+not just the hit rate but *which category* fails. The expectation is that ordinary phrases resolve
+("request throttling" → `throttling`) and short acronyms do not ("BFF"), which would make the
+residual roughly a dozen concepts rather than two hundred.
+
+**Also corrected**: the normalization in the `concept_terms` entry above was specified as
+"collapse non-alphanumerics to single spaces". It is now **strip all non-alphanumerics**:
+
+```ts
+export function normalizeTerm(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+```
+
+Measured over the 49 concepts, both variants produce 50 terms and zero collisions, but stripping
+also unifies concatenated and separated spellings (`anti-corruption-layer` and
+`anticorruption layer` both become `anticorruptionlayer`), which removes an entire class of
+variant that would otherwise have to be hand-written. `displayTerm` carries the readable form, so
+the key does not need to be legible. The uniqueness test will catch any collision this creates as
+the concept set grows.
+**Status**: active
+
+## 2026-08-10 — Embedding dimension is 1536, and the deciding factor is not concept count
+
+**Decision**: `vector(1536)`, `text-embedding-3-small`, as DESIGN.md §8 already specified.
+
+**Why not sized to the corpus**: at this scale, dimension is not a cost variable at all.
+
+```
+300 concepts x 1536 dims x 4 bytes = 1.8 MB      one query = 460k multiply-adds, microseconds
+300 concepts x  256 dims x 4 bytes = 0.3 MB
+```
+
+Reducing dimensions saves nothing that matters and only begins to pay off at millions of vectors.
+What dimension actually buys is resolution between *near* items, and this corpus's hard cases are
+exactly that — `throttling` versus `rate-limiting` is a fine distinction, and fine distinctions are
+the first thing lost when a Matryoshka embedding is truncated. Truncating would trade away the only
+property worth having in exchange for a saving of no consequence.
+
+**Why not `text-embedding-3-large` (3072)**: better on near-synonyms, negligible extra storage, but
+roughly 6.5x the per-token price — and JD items are embedded live on every request, so that cost is
+recurring while the benefit is unverified.
+
+**Reconsideration trigger, available in the same step that computes the vectors**: threshold
+calibration produces positive and negative baseline distributions. If they overlap heavily, 1536 is
+not separating this concept set and `large` is worth trying; if they separate cleanly, the question
+is closed. Switching costs one migration plus a few seconds of recomputation for ~70 vectors, so
+this is a revisable default rather than a lock-in.
+**Status**: active
+
+## 2026-08-10 — Run the loop end to end before expanding the corpus
+
+**Decision**: no further corpus expansion until a JD produces a rendered concept map. The queued
+items — adding `docs/ai-ml/` and `docs/antipatterns/`, growing toward 300 concepts, hand-authored
+aliases — all wait behind that.
+
+**Why**: DESIGN.md §11 sizes P0 at two to three weeks covering *both* halves, offline and online.
+All work so far has been offline, and the online half has never run once. DESIGN.md §11 names this
+exact failure mode — weeks of corpus work without ever running the pipeline — and the point-cloud
+re-sequencing pushes the online half further out again.
+
+The risk is not that the architecture is wrong. It is ending up with well-engineered plumbing and
+nothing running, which is also the only state in which the obvious challenge to this project —
+"why not paste the job description into a general model with web search and let it write the
+notes?" — becomes unanswerable. That challenge is largely correct on product grounds and DESIGN.md
+§0 does not contest it: product usability is explicitly secondary to learning AI engineering and
+having something demonstrable. What makes the project defensible is having run it and found things
+the shortcut cannot surface, such as the 69% loss measured above. That defence requires a working
+loop, not a larger corpus.
+
+**The shortest path to it**, using only what exists: 49 concepts, 43 with `related` edges, 425
+chunks, plus mechanically-extracted terms, ~70 concept vectors, extract, resolve, and a graph view.
+No generation, no verification, no answer records, no manual annotation.
+**Status**: active
