@@ -178,9 +178,14 @@ specs/*/checklists/
 
 # Interview-corpus raw cache and working state — large and/or re-derivable from
 # sources.yaml + the fetcher scripts, not source of truth. Tracked instead:
-# corpus/sources.yaml, corpus/_meta/manifest/, corpus/licenses/, corpus/summary.json,
-# corpus/reports/.
+# corpus/sources.yaml, corpus/_meta/manifest/, corpus/_meta/candidates/,
+# corpus/licenses/, corpus/summary.json, corpus/reports/.
+#
+# candidates/ is tracked because it is NOT re-derivable: each row is a concept a human
+# accepted into the corpus (hard constraint 7), and concept_id may never be renamed once
+# admitted. Regenerating it means redoing the review, not rerunning a script.
 corpus/raw/
 corpus/.venv/
 corpus/_meta/*
 !corpus/_meta/manifest/
+!corpus/_meta/candidates/
