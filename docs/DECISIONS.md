@@ -977,4 +977,42 @@ with the gitignore comment amended to say why it is exempt from the "re-derivabl
 covers the discovery logs and caches beside it — a concept admitted by a person under hard
 constraint 7 is a decision, not derived data, and `concept_id` may never be renamed once it
 exists.
+## 2026-08-10 — Embedding calls belong to the inference service; storing and comparing vectors does not
+
+**Decision**: the call that turns text into a vector is made by the Python agent orchestration
+service, exposed over the existing HTTP interface. The corpus build and, later, `resolve` obtain
+vectors by asking for them. Storing vectors and computing similarity between them stay with the
+NestJS service as ordinary database work. The agent service never stores a vector, never reads
+one, and never performs a similarity search — consistent with DESIGN.md §4.1's rule that Python
+does not connect to the database.
+
+This settles the question the *heading classification* entry deferred on 2026-08-09 when it
+declined to open a second model call site, and which the abolition of that mapping table left
+open rather than answered.
+
+**Why, in order of weight**:
+
+1. **Credential handling would otherwise be duplicated.** `agent_service/secrets.py` fetches the
+   provider key from AWS Secrets Manager; the TypeScript side has no secret-handling code at
+   all. Putting the call there means writing that a second time — and the pending migration from
+   a long-lived access key to a role-based credential would then have to be done twice, in two
+   languages.
+2. **It matches the recorded split** — DESIGN.md §4.1 gives inference to Python and persistence
+   plus retrieval to TypeScript. An embedding call is inference; a vector comparison in the
+   database is retrieval. The boundary already answers this; it had simply not been applied to
+   embeddings.
+3. **It adds no dependency.** One endpoint on the agent service, one method on the existing
+   `agent-orchestration.client.ts`. The alternative needs an AWS SDK client that is not declared
+   and a provider client that is.
+
+**What was weighed and found not to matter**: the extra local HTTP hop costs single-digit
+milliseconds against a provider call of 50–200ms. Availability coupling is not new either — the
+NestJS service already depends on the agent service for extraction.
+
+**Discovered while deciding, and corrected as part of this feature**: `package.json` declares
+`openai` and `@langchain/langgraph` as dependencies of the NestJS service, and neither is
+imported anywhere. They are residue from before SCRUM-41 moved model calls to Python. Under this
+decision the first must not exist on that side at all and the second belongs to the agent
+service, so both are removed. A declared dependency is a statement about what a service does;
+these two currently state the opposite of the boundary.
 **Status**: active

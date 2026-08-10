@@ -116,6 +116,12 @@ and the evidence for whether they are good enough.
    them can be judged before any threshold is chosen.
 4. **Given** the combined text used as vector input, **When** the corpus is inspected, **Then**
    that combined text is not stored as a field anywhere.
+5. **Given** the build needs a vector, **When** it obtains one, **Then** the request goes to the
+   inference service over the existing interface and the provider credential never leaves that
+   service.
+6. **Given** two stored vectors need comparing, **When** the comparison runs, **Then** it runs
+   on the persistence side as a database operation, not by sending vectors to the inference
+   service.
 
 ---
 
@@ -199,11 +205,18 @@ and the evidence for whether they are good enough.
 - **FR-022**: The build MUST report similarity distributions for a positive baseline and a
   negative baseline over the concept set, as the evidence a later threshold will be calibrated
   against.
-- **FR-025**: The call to the external embedding service MUST originate from
-  [NEEDS CLARIFICATION: which component owns this call? The corpus build tooling is a third
-  thing alongside the two services, and the project has a recorded rule that model calls
-  converge on one place. An earlier decision explicitly declined to open a second call site for
-  exactly this reason.]
+- **FR-025**: The call to the external embedding service MUST originate from the inference
+  service, which already holds the provider credential, and MUST be reachable over the existing
+  service interface. No component outside the inference service may hold that credential or
+  call the provider directly.
+- **FR-026**: Storing vectors and comparing them MUST remain with the persistence service. The
+  inference service produces a vector and returns it; it does not store one, does not read one,
+  and does not perform similarity search. Similarity between stored vectors is a database
+  operation on the persistence side.
+- **FR-027**: Declared capabilities that do not exist MUST be removed. The persistence service
+  currently declares a dependency on a model-provider client and on a graph-orchestration
+  library, neither of which it uses anywhere; under FR-025 the first must not exist there at
+  all, and the second belongs to the inference service.
 
 **Build behaviour**
 
@@ -250,6 +263,9 @@ and the evidence for whether they are good enough.
   made on evidence rather than assumption.
 - **SC-007**: Any regression that drops source text fails the build, rather than producing a
   smaller corpus that looks healthy.
+- **SC-008**: Exactly one process holds the model-provider credential, unchanged from today.
+  The pending migration from a long-lived key to a role-based credential therefore remains a
+  single piece of work rather than two.
 
 ## Assumptions
 
@@ -283,7 +299,11 @@ and the evidence for whether they are good enough.
   reproducibly (addressed on a separate branch).
 - Source documents are re-fetched and verified against the recorded checksums rather than read
   from a committed copy.
-- Computing concept vectors requires access to an external embedding service.
+- Computing concept vectors requires the inference service to be running and to have its
+  provider credential available, in the same way the corpus build already requires a database.
+  This adds a second runtime dependency to what is otherwise an offline batch process.
+- The interface between the two services gains one operation. This is a boundary change, which
+  is why this feature is on the full planning flow.
 
 ## Out of Scope
 
