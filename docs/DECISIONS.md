@@ -954,3 +954,27 @@ loop, not a larger corpus.
 chunks, plus mechanically-extracted terms, ~70 concept vectors, extract, resolve, and a graph view.
 No generation, no verification, no answer records, no manual annotation.
 **Status**: active
+
+## 2026-08-10 — Correction: the raw corpus is re-fetchable, not committed; the concept seed is now tracked
+
+**Corrects** *2026-08-10 — Reversibility decides what must be settled now*, which stated that
+"the raw corpus is committed under `corpus/raw/`". It is not. `corpus/raw/` is gitignored and
+is 502 MB.
+
+**What the safety net actually is**: `corpus/sources.yaml` pins each source to an upstream
+commit, and `corpus/_meta/manifest/*.jsonl` records a sha256 per file. Recovery is therefore
+*re-fetch and verify*, not *read from disk*. The guarantee still holds — the same bytes are
+recoverable and provably the same — but it depends on the upstream repository still serving
+that commit, which committed files would not.
+
+The reversibility argument itself is unaffected: identifiers remain the only category that
+must be right the first time, because everything else can be rebuilt from the source layer
+one way or another.
+
+**Separately fixed**: `corpus/_meta/candidates/azure.jsonl` had never been committed at all. It
+held the 49 human-accepted concepts and existed only inside one worktree. It is now tracked,
+with the gitignore comment amended to say why it is exempt from the "re-derivable" rule that
+covers the discovery logs and caches beside it — a concept admitted by a person under hard
+constraint 7 is a decision, not derived data, and `concept_id` may never be renamed once it
+exists.
+**Status**: active
