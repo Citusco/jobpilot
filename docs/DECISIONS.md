@@ -818,3 +818,139 @@ Two things follow:
 `related` ids, not just its name. Given names alone, "rate limiting" as an alias of `throttling` is
 the answer any model — or person — would give.
 **Status**: active
+
+## 2026-08-10 — `chunk_id` scheme: heading path for sections, content hash for sub-splits
+
+**Decision**: with `kind` removed from the identifier, the scheme becomes
+
+```
+section chunk   {source}:{concept}:{heading-path-slug}
+                azure:cqrs:solution--benefits-of-cqrs
+
+split child     {source}:{concept}:{heading-path-slug}:{content-sha8}
+                azure:cqrs:solution--benefits-of-cqrs:a3f21b09
+```
+
+The existing numeric disambiguation suffix for duplicate slugs within a concept is retained.
+Every current `chunk_id` changes as a result. That is acceptable exactly once — nothing outside
+the ingest pipeline references them yet — and this is the last time it may happen.
+
+**Why the child uses a content hash rather than an ordinal**: `specs/005` FR-005 already required
+ids to be label-derived rather than positional. A section split at paragraph boundaries has no
+label to derive from, leaving two options:
+
+```
+ordinal   text is inserted upstream, every later child shifts
+          → the id survives but now denotes different text     → silent error
+hash      the text changes, the id changes
+          → the citation breaks visibly                        → explicit error
+```
+
+An id that stays stable while the text under it changes is worse than an id that breaks, because
+a stored citation or answer record would keep pointing at it and quietly mean something else. The
+same reasoning runs through hard constraints 1, 3 and 6.
+
+Sections keep a heading-derived id because a heading is a stable, meaningful anchor in the
+document's structure; sub-splits have no such anchor and fall back to their own content. Each
+level uses the most stable identifier available to it.
+**Status**: active
+
+## 2026-08-10 — Terms are extracted mechanically; hand-authored aliases are deferred until measured
+
+**Decision**: `concept_terms` is populated entirely by rule at ingest, with no hand annotation:
+
+```
+conceptId                       throttling
+name                            Throttling
+H1 / frontmatter title          Throttling pattern
+name with/without the "pattern" suffix
+```
+
+Hand-authored aliases are removed from the near-term plan. They are added later, only for
+categories that a measurement shows tier-2 vector resolution actually fails on.
+
+**Supersedes** the "Blocking gap" paragraph of *2026-08-10 — The concept point cloud is the first
+product surface*, which called empty `aliases` "the accuracy floor". That was overstated. The
+system resolves without any aliases at all — a term-table miss simply falls through to vector
+similarity. Aliases are an optimisation that converts a probabilistic match into a deterministic
+one; they are not a prerequisite.
+
+**Why**: the plan had reached "hand-write roughly 200 aliases" without anyone testing whether
+vector-only resolution is adequate. That is the same mistake as the abolished heading mapping
+table — reaching for per-vocabulary manual annotation before establishing that the automatic path
+is insufficient — and it contradicts the measurement-first discipline recorded on 2026-08-08.
+
+**The measurement that gates the work**: run real JD items through vector-only resolve and record
+not just the hit rate but *which category* fails. The expectation is that ordinary phrases resolve
+("request throttling" → `throttling`) and short acronyms do not ("BFF"), which would make the
+residual roughly a dozen concepts rather than two hundred.
+
+**Also corrected**: the normalization in the `concept_terms` entry above was specified as
+"collapse non-alphanumerics to single spaces". It is now **strip all non-alphanumerics**:
+
+```ts
+export function normalizeTerm(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+```
+
+Measured over the 49 concepts, both variants produce 50 terms and zero collisions, but stripping
+also unifies concatenated and separated spellings (`anti-corruption-layer` and
+`anticorruption layer` both become `anticorruptionlayer`), which removes an entire class of
+variant that would otherwise have to be hand-written. `displayTerm` carries the readable form, so
+the key does not need to be legible. The uniqueness test will catch any collision this creates as
+the concept set grows.
+**Status**: active
+
+## 2026-08-10 — Embedding dimension is 1536, and the deciding factor is not concept count
+
+**Decision**: `vector(1536)`, `text-embedding-3-small`, as DESIGN.md §8 already specified.
+
+**Why not sized to the corpus**: at this scale, dimension is not a cost variable at all.
+
+```
+300 concepts x 1536 dims x 4 bytes = 1.8 MB      one query = 460k multiply-adds, microseconds
+300 concepts x  256 dims x 4 bytes = 0.3 MB
+```
+
+Reducing dimensions saves nothing that matters and only begins to pay off at millions of vectors.
+What dimension actually buys is resolution between *near* items, and this corpus's hard cases are
+exactly that — `throttling` versus `rate-limiting` is a fine distinction, and fine distinctions are
+the first thing lost when a Matryoshka embedding is truncated. Truncating would trade away the only
+property worth having in exchange for a saving of no consequence.
+
+**Why not `text-embedding-3-large` (3072)**: better on near-synonyms, negligible extra storage, but
+roughly 6.5x the per-token price — and JD items are embedded live on every request, so that cost is
+recurring while the benefit is unverified.
+
+**Reconsideration trigger, available in the same step that computes the vectors**: threshold
+calibration produces positive and negative baseline distributions. If they overlap heavily, 1536 is
+not separating this concept set and `large` is worth trying; if they separate cleanly, the question
+is closed. Switching costs one migration plus a few seconds of recomputation for ~70 vectors, so
+this is a revisable default rather than a lock-in.
+**Status**: active
+
+## 2026-08-10 — Run the loop end to end before expanding the corpus
+
+**Decision**: no further corpus expansion until a JD produces a rendered concept map. The queued
+items — adding `docs/ai-ml/` and `docs/antipatterns/`, growing toward 300 concepts, hand-authored
+aliases — all wait behind that.
+
+**Why**: DESIGN.md §11 sizes P0 at two to three weeks covering *both* halves, offline and online.
+All work so far has been offline, and the online half has never run once. DESIGN.md §11 names this
+exact failure mode — weeks of corpus work without ever running the pipeline — and the point-cloud
+re-sequencing pushes the online half further out again.
+
+The risk is not that the architecture is wrong. It is ending up with well-engineered plumbing and
+nothing running, which is also the only state in which the obvious challenge to this project —
+"why not paste the job description into a general model with web search and let it write the
+notes?" — becomes unanswerable. That challenge is largely correct on product grounds and DESIGN.md
+§0 does not contest it: product usability is explicitly secondary to learning AI engineering and
+having something demonstrable. What makes the project defensible is having run it and found things
+the shortcut cannot surface, such as the 69% loss measured above. That defence requires a working
+loop, not a larger corpus.
+
+**The shortest path to it**, using only what exists: 49 concepts, 43 with `related` edges, 425
+chunks, plus mechanically-extracted terms, ~70 concept vectors, extract, resolve, and a graph view.
+No generation, no verification, no answer records, no manual annotation.
+**Status**: active

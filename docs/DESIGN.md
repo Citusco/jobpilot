@@ -8,6 +8,13 @@
 > **This document supersedes `jobpilot-plan-v2.md`.** That earlier document was written
 > before the pivot away from coding questions; roughly half of its content is now stale.
 >
+> **Precedence, added 2026-08-10.** `docs/DECISIONS.md` now wins on any conflict with this
+> document. Five hand-run experiments and a product re-sequencing reversed several
+> conclusions recorded here — most importantly the `kind` classification subsystem, which is
+> abolished. Sections whose conclusions changed are marked **[SUPERSEDED 2026-08-10]** with a
+> pointer; their *reasoning* is still worth reading, only the conclusion moved. Unmarked
+> sections stand.
+
 > Marker convention: **[DECIDED]** confirmed · **[OPEN]** needs a human call ·
 > **[VALIDATED]** backed by experimental data
 
@@ -688,7 +695,12 @@ Set `citable` automatically based on license — don't judge it by hand each tim
 `corpus/raw/` must be gitignored; the repo only commits manifests, section maps, and
 reports.
 
-### 7.5 Chunking spec [DECIDED, based on actual observation of the raw CQRS document]
+### 7.5 Chunking spec [SUPERSEDED 2026-08-10; was DECIDED, based on actual observation of the raw CQRS document]
+
+> **Superseded — see `docs/DECISIONS.md` (2026-08-10 entries).** The `kind` regex classification and the restriction of item-level splitting to
+> cost/benefit/when sections are gone; chunking is now structure-first with `headingPath`
+> and a size cap, and headingless preamble text is included. H2+H3 splitting and
+> code-fence protection stand.
 
 **⚠️ Most important rule: chunking must go down to H3.**
 
@@ -997,7 +1009,10 @@ sources.yaml → rerun ingest
 
 Ingest is idempotent — `content_hash` skips files that haven't changed.
 
-### ③ A specific `kind` is missing (more common, triggers `gaps`)
+### ③ A specific `kind` is missing (more common, triggers `gaps`) [SUPERSEDED 2026-08-10]
+
+> **Superseded — see `docs/DECISIONS.md` (2026-08-10 entries).** `kind` no longer exists. The gap signal itself stands, but it is no longer keyed on a
+> classification enum.
 
 ```
 api-composition: benefit ✅  cost ❌  when ⚠️
@@ -1012,7 +1027,10 @@ c) Accept the gap: some patterns genuinely have never had their costs
    systematically written up anywhere                                    ← an outcome to accept
 ```
 
-### ④ Missing chunking rule (the most insidious case)
+### ④ Missing chunking rule (the most insidious case) [SUPERSEDED 2026-08-10]
+
+> **Superseded — see `docs/DECISIONS.md` (2026-08-10 entries).** The unmapped-headings report is gone with the filter it reported on. The replacement
+> guarantee is a byte-level coverage figure computed from `sourceOffset`/`sourceLength`.
 
 **The material was fetched, but the rule didn't recognize it.**
 
@@ -1157,7 +1175,10 @@ Because ungrounded's real risk isn't "no source," it's "the content might be wro
 
 ## 11. Priorities [DECIDED]
 
-### P0 — without this, the system doesn't exist
+### P0 — without this, the system doesn't exist [SUPERSEDED 2026-08-10]
+
+> **Superseded — see `docs/DECISIONS.md` (2026-08-10 entries).** The P0 node list still contains `kind-classify`, which no longer exists, and the online
+> half is re-sequenced behind the concept point cloud.
 
 ```
 Offline: fetch → chunk → kind-classify → corpus tables
@@ -1254,7 +1275,9 @@ Violating any of these causes damage that is silent and hard to discover after t
 
 ---
 
-## 13. Open decision points
+## 13. Open decision points [SUPERSEDED 2026-08-10]
+
+> **Superseded — see `docs/DECISIONS.md` (2026-08-10 entries).** Open decisions #4 and #5 were settled empirically by five hand-run experiments.
 
 | # | Decision | Impact |
 |---|---|---|
