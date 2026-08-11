@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { PrismaClient, ConceptKind, ConceptStatus, TermType } from '../src/generated/prisma/client.js';
 import { expandConceptTerms, type ConceptTermSource } from '../src/corpus/expand-concept-terms.js';
+import { AgentOrchestrationClient } from '../src/agent-orchestration/agent-orchestration.client.js';
 
 // Idempotent, content-hash-keyed ingest of chunk_azure.py's two JSONL outputs
 // into Postgres via the Prisma client NestJS itself generates — see
@@ -257,6 +258,128 @@ export async function ingestConceptTerms(prisma: PrismaClient, candidates: Candi
   console.log(`[ingest-corpus] concept_terms: ${rows.length} terms over ${sources.length} concepts, 0 collisions`);
 }
 
+// --- Concept vectors (User Story 3) -----------------------------------------
+//
+// FR-019 - FR-022. Runs only behind --embed, and only after chunks and terms
+// are already committed (FR-025's ordering rationale in plan.md): a missing
+// or unreachable agent service must not block the two offline stories.
+
+const EMBED_OPENING_CHARS = 500;
+
+export function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+export function percentile(sortedAscending: number[], p: number): number {
+  if (sortedAscending.length === 0) return NaN;
+  const idx = Math.min(sortedAscending.length - 1, Math.floor((p / 100) * sortedAscending.length));
+  return sortedAscending[idx];
+}
+
+/**
+ * Computes and stores one embedding per concept -- name, its lookup terms,
+ * and the opening of its preamble chunk where material exists (FR-019).
+ * The assembled input string is never persisted as a column (FR-020);
+ * unit-level (DocChunk) embeddings are never computed here (FR-021).
+ * Reports positive/negative similarity baselines afterward (FR-022) without
+ * choosing a threshold -- nothing resolves against one yet.
+ */
+export async function ingestConceptVectors(
+  prisma: PrismaClient,
+  client: Pick<AgentOrchestrationClient, 'embed'>,
+): Promise<void> {
+  const concepts = await prisma.concept.findMany({
+    select: { conceptId: true, name: true, related: true },
+  });
+  const terms = await prisma.conceptTerm.findMany({
+    select: { conceptId: true, displayTerm: true, termType: true },
+  });
+  const termsByConcept = new Map<string, string[]>();
+  for (const t of terms) {
+    if (t.termType === 'id') continue; // the slug form adds nothing a name-based embedding needs
+    const list = termsByConcept.get(t.conceptId) ?? [];
+    list.push(t.displayTerm);
+    termsByConcept.set(t.conceptId, list);
+  }
+
+  // "the opening of its preamble chunk": headingPath length 1 identifies a
+  // preamble (chunk_azure.py); parentChunkId null picks the whole preamble
+  // when unsplit, or its first child when split, since ordering by
+  // sourceOffset ascending and taking the first hit is the same either way.
+  const allChunks = await prisma.docChunk.findMany({
+    select: { patternId: true, headingPath: true, content: true, sourceOffset: true },
+    orderBy: { sourceOffset: 'asc' },
+  });
+  const openingByConcept = new Map<string, string>();
+  for (const chunk of allChunks) {
+    if (chunk.headingPath.length !== 1) continue; // only a preamble chunk has a single-element headingPath
+    if (openingByConcept.has(chunk.patternId)) continue; // keep the earliest (lowest sourceOffset)
+    openingByConcept.set(chunk.patternId, chunk.content.slice(0, EMBED_OPENING_CHARS).trim());
+  }
+
+  const conceptIds: string[] = [];
+  const inputTexts: string[] = [];
+  for (const c of concepts) {
+    const distinctTerms = (termsByConcept.get(c.conceptId) ?? []).filter((t) => t !== c.name);
+    const lines = [c.name];
+    if (distinctTerms.length > 0) lines.push(`also known as: ${distinctTerms.join(', ')}`);
+    const opening = openingByConcept.get(c.conceptId);
+    if (opening) lines.push(opening);
+    conceptIds.push(c.conceptId);
+    inputTexts.push(lines.join('\n'));
+  }
+
+  console.log(`[ingest-corpus] requesting ${conceptIds.length} concept vectors from the agent service...`);
+  const vectors = await client.embed(inputTexts);
+
+  for (let i = 0; i < conceptIds.length; i++) {
+    const literal = `[${vectors[i].join(',')}]`;
+    await prisma.$executeRaw`UPDATE concepts SET embedding = ${literal}::vector WHERE concept_id = ${conceptIds[i]}`;
+  }
+  console.log(
+    `[ingest-corpus] concept vectors: ${conceptIds.length} written, dimensions ${vectors[0]?.length ?? 0}`,
+  );
+
+  const vectorByConceptId = new Map(conceptIds.map((id, i) => [id, vectors[i]]));
+  const relatedPairKeys = new Set<string>();
+  const positive: number[] = [];
+  for (const c of concepts) {
+    for (const relatedId of c.related) {
+      const a = vectorByConceptId.get(c.conceptId);
+      const b = vectorByConceptId.get(relatedId);
+      if (!a || !b) continue;
+      const key = [c.conceptId, relatedId].sort().join('|');
+      if (relatedPairKeys.has(key)) continue;
+      relatedPairKeys.add(key);
+      positive.push(cosineSimilarity(a, b));
+    }
+  }
+
+  const negative: number[] = [];
+  for (let i = 0; i < conceptIds.length; i++) {
+    for (let j = i + 1; j < conceptIds.length; j++) {
+      const key = [conceptIds[i], conceptIds[j]].sort().join('|');
+      if (relatedPairKeys.has(key)) continue;
+      negative.push(cosineSimilarity(vectors[i], vectors[j]));
+    }
+  }
+  positive.sort((x, y) => x - y);
+  negative.sort((x, y) => x - y);
+
+  console.log(
+    `[ingest-corpus] similarity baselines: positive (n=${positive.length}) p10=${percentile(positive, 10).toFixed(4)}, ` +
+      `negative (n=${negative.length}) p90=${percentile(negative, 90).toFixed(4)}`,
+  );
+}
+
 async function main() {
   const prisma = new PrismaClient();
   try {
@@ -270,6 +393,14 @@ async function main() {
     await ingestRelatedEdgeConcepts(prisma, candidates);
     await ingestChunks(prisma, chunks);
     await ingestConceptTerms(prisma, candidates);
+
+    // Last, and only behind --embed: the only step with an external
+    // dependency (the agent service), so a missing or unreachable service
+    // leaves chunks and terms already committed rather than blocking them
+    // (plan.md's Implementation Sequence, point 5).
+    if (process.argv.includes('--embed')) {
+      await ingestConceptVectors(prisma, new AgentOrchestrationClient());
+    }
   } finally {
     await prisma.$disconnect();
   }
