@@ -263,9 +263,19 @@ def _eligible_files():
 def _reconstruct_document(post_fm_text: str, chunks: list[dict]) -> str:
     """Reconstructs the post-frontmatter text from LEAF chunk spans only
     (chunks that are not themselves a parent) plus the heading-line bytes
-    between them, in offset order. This is the exact SC-001 invariant:
-    if this reconstruction doesn't equal the source, something was dropped,
-    duplicated, or misaligned."""
+    between them, in offset order.
+
+    SCOPE, precisely (an independent review of this suite found the original
+    wording overclaimed): this catches duplicated or overlapping spans
+    (reconstructed length would exceed the source's) and misaligned offsets
+    (test_real_corpus_content_equals_source_span_exactly covers this one
+    directly too). It does NOT catch a whole leaf being silently omitted --
+    a missing leaf's span just becomes part of the next gap, which is filled
+    unconditionally from post_fm_text, so a dropped section reconstructs
+    "successfully." That is the job of test_real_corpus_overall_byte_coverage_is_total,
+    which recomputes total claimable bytes independently of which chunks
+    chunk_file() actually emitted. The two tests are not redundant with each
+    other; do not remove one on the assumption the other already covers it."""
     parent_ids = {c["parentChunkId"] for c in chunks if c["parentChunkId"]}
     leaves = sorted(
         (c for c in chunks if c["chunkId"] not in parent_ids),
@@ -274,10 +284,7 @@ def _reconstruct_document(post_fm_text: str, chunks: list[dict]) -> str:
     # Gaps between leaves are expected -- they are the heading-line bytes
     # ("## Solution\n") that delimit sections and are deliberately not part
     # of any chunk's content (docs/DECISIONS.md's "Full body text" counting
-    # basis excludes heading markup throughout). Reproducing them verbatim
-    # from the source (not asserting anything about their shape) is what
-    # proves the interleaving is gapless and non-overlapping: if a byte were
-    # actually dropped or duplicated, this reconstruction would not match.
+    # basis excludes heading markup throughout).
     pieces = []
     cursor = 0
     for leaf in leaves:
@@ -289,6 +296,10 @@ def _reconstruct_document(post_fm_text: str, chunks: list[dict]) -> str:
 
 
 def test_real_corpus_leaf_chunks_reconstruct_every_document_exactly():
+    # Catches duplication, overlap, and offset misalignment -- NOT omission,
+    # which test_real_corpus_overall_byte_coverage_is_total exists to catch
+    # instead. See _reconstruct_document's docstring for why these are two
+    # separate, non-redundant guarantees.
     if not MANIFEST_EXISTS:
         import pytest
         pytest.skip("corpus/raw/azure/ not present in this environment")

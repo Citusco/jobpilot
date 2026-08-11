@@ -312,19 +312,35 @@ describe('scripts/ingest-corpus.ts (integration)', () => {
     });
 
     it('reports every cross-concept term collision before failing, not just the first (FR-015)', async () => {
+      // Two INDEPENDENT colliding pairs, not one: a .find()-style "stop at
+      // the first collision" implementation would satisfy a single-pair
+      // fixture just as well as the .filter()-style "collect every
+      // collision" one FR-015 actually requires -- asserting on both pairs'
+      // presence is what tells the two apart.
       const idA = `${testConceptId}-a`;
       const idB = `${testConceptId}-b`;
+      const idC = `${testConceptId}-c`;
+      const idD = `${testConceptId}-d`;
       const colliding: CandidateLine[] = [
-        { conceptId: idA, name: 'Same Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'a.md' },
-        { conceptId: idB, name: 'Same Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'b.md' },
+        { conceptId: idA, name: 'Alpha Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'a.md' },
+        { conceptId: idB, name: 'Alpha Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'b.md' },
+        { conceptId: idC, name: 'Beta Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'c.md' },
+        { conceptId: idD, name: 'Beta Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'd.md' },
       ];
 
-      await expect(ingestConceptTerms(prisma, colliding)).rejects.toThrow(
-        new RegExp(`${idA}.*${idB}|${idB}.*${idA}`, 's'),
-      );
+      let thrown: unknown;
+      try {
+        await ingestConceptTerms(prisma, colliding);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).toMatch(new RegExp(`${idA}.*${idB}|${idB}.*${idA}`, 's'));
+      expect(message).toMatch(new RegExp(`${idC}.*${idD}|${idD}.*${idC}`, 's'));
     });
 
-    it('produces stable term and concept counts across two consecutive full runs over the real corpus (FR-023)', async () => {
+    it('produces identical term and concept rows across two consecutive full runs over the real corpus (FR-023, data-model.md invariant 4)', async () => {
       let realCandidates: CandidateLine[];
       try {
         realCandidates = readRealCandidates();
@@ -334,20 +350,33 @@ describe('scripts/ingest-corpus.ts (integration)', () => {
       }
       if (realCandidates.length === 0) return;
 
+      // Row identity, not just row count: a bug that reassigns which
+      // concept wins a within-concept precedence tie between runs would
+      // preserve the total count while silently changing which concept a
+      // term resolves to -- a count-only comparison would not catch that.
+      const snapshotTerms = async () =>
+        (await prisma.conceptTerm.findMany({ select: { term: true, conceptId: true, termType: true } }))
+          .map((r) => `${r.term}|${r.conceptId}|${r.termType}`)
+          .sort();
+      const snapshotConcepts = async () =>
+        (await prisma.concept.findMany({ select: { conceptId: true, status: true, addedFrom: true } }))
+          .map((r) => `${r.conceptId}|${r.status}|${r.addedFrom}`)
+          .sort();
+
       await ingestCandidates(prisma, realCandidates);
       await ingestRelatedEdgeConcepts(prisma, realCandidates);
       await ingestConceptTerms(prisma, realCandidates);
-      const termsAfterFirst = await prisma.conceptTerm.count();
-      const conceptsAfterFirst = await prisma.concept.count();
+      const termsAfterFirst = await snapshotTerms();
+      const conceptsAfterFirst = await snapshotConcepts();
 
       const createdSecond = await ingestRelatedEdgeConcepts(prisma, realCandidates);
       await ingestConceptTerms(prisma, realCandidates);
-      const termsAfterSecond = await prisma.conceptTerm.count();
-      const conceptsAfterSecond = await prisma.concept.count();
+      const termsAfterSecond = await snapshotTerms();
+      const conceptsAfterSecond = await snapshotConcepts();
 
       expect(createdSecond).toEqual([]);
-      expect(termsAfterSecond).toBe(termsAfterFirst);
-      expect(conceptsAfterSecond).toBe(conceptsAfterFirst);
+      expect(termsAfterSecond).toEqual(termsAfterFirst);
+      expect(conceptsAfterSecond).toEqual(conceptsAfterFirst);
     }, 30_000);
   });
 
