@@ -2,21 +2,30 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from agent_service.embeddings import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL,
+    build_embeddings_client,
+    embed_texts,
+)
 from agent_service.graph import build_graph
 from agent_service.nodes import AgentLLMError
 from agent_service.schemas import (
     CandidateDirection,
+    EmbedRequest,
+    EmbedResponse,
     ExtractInsufficient,
     Extraction,
     ExtractRequest,
     ExtractResponse,
     ExtractSufficient,
 )
-from agent_service.secrets import load_secrets_into_env
+from agent_service.secrets import SecretLoadError, load_secrets_into_env
 
 app = FastAPI(title="JobPilot Agent Orchestration Service")
 
 _compiled_graph: Any | None = None
+_embeddings_client: Any | None = None
 
 
 def get_graph() -> Any:
@@ -65,3 +74,33 @@ def extract(request: ExtractRequest, graph: Any = Depends(get_graph)) -> Extract
             for d in state["directions"]
         ],
     )
+
+
+def get_embeddings_client() -> Any:
+    """FastAPI dependency for the embeddings client, mirroring get_graph()'s
+    lazy-load-then-cache shape. Overridden in tests via
+    app.dependency_overrides -- this function body never runs in the test
+    suite, so no test reaches a provider.
+
+    Unlike get_graph(), a missing credential is translated to a 503 here
+    directly (SecretLoadError raised inside a FastAPI dependency is caught
+    before the route body runs) -- contracts/embed.md's 503 case, naming
+    the missing credential rather than the network."""
+    global _embeddings_client
+    if _embeddings_client is None:
+        try:
+            load_secrets_into_env()
+        except SecretLoadError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        _embeddings_client = build_embeddings_client()
+    return _embeddings_client
+
+
+@app.post("/embed", response_model=EmbedResponse)
+def embed(request: EmbedRequest, client: Any = Depends(get_embeddings_client)) -> EmbedResponse:
+    try:
+        vectors = embed_texts(client, request.texts)
+    except AgentLLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return EmbedResponse(vectors=vectors, model=EMBEDDING_MODEL, dimensions=EMBEDDING_DIMENSIONS)

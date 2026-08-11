@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # --- 1. LLM output schemas (with_structured_output targets) ---
 
@@ -127,3 +127,34 @@ class ExtractInsufficient(BaseModel):
 
 
 ExtractResponse = ExtractSufficient | ExtractInsufficient
+
+
+# --- /embed (specs/006-corpus-structure-rebuild/contracts/embed.md) ---
+#
+# No LangGraph node involved -- a plain route, request/response only -- so
+# these don't split into the three-layer structure above. Field bounds
+# (1-256 texts, each non-empty and at most 8,000 chars) are the contract's
+# own guard against an unbounded request, not a provider limit.
+
+_MAX_EMBED_TEXTS = 256
+_MAX_TEXT_CHARS = 8000
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(min_length=1, max_length=_MAX_EMBED_TEXTS)
+
+    @field_validator("texts")
+    @classmethod
+    def _each_text_is_valid(cls, texts: list[str]) -> list[str]:
+        for text in texts:
+            if not text.strip():
+                raise ValueError("each text must be non-empty after trimming")
+            if len(text) > _MAX_TEXT_CHARS:
+                raise ValueError(f"each text must be at most {_MAX_TEXT_CHARS} characters")
+        return texts
+
+
+class EmbedResponse(BaseModel):
+    vectors: list[list[float]]
+    model: str
+    dimensions: int
