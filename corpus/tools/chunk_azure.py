@@ -93,6 +93,24 @@ def derive_display_name(concept_id: str, frontmatter: dict) -> str:
     return " ".join(word.capitalize() for word in concept_id.split("-"))
 
 
+_H1_RE = re.compile(r"^#[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+
+
+def derive_raw_title(preamble_text: str, frontmatter: dict) -> str | None:
+    """The title exactly as authored -- unstripped of a trailing "Pattern"/
+    "Architecture Style" suffix, unlike derive_display_name. Feeds the
+    concept_terms title-type term (specs/006-corpus-structure-rebuild
+    data-model.md): frontmatter `title` first, falling back to the
+    document's H1 (searched only within the preamble, not the whole file,
+    so a `# ` line inside a later code sample can never be mistaken for
+    the document title)."""
+    title = frontmatter.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    m = _H1_RE.search(preamble_text)
+    return m.group(1).strip() if m else None
+
+
 def parse_doc_date(frontmatter: dict) -> str | None:
     raw = frontmatter.get("ms.date")
     if not isinstance(raw, str):
@@ -361,6 +379,7 @@ def chunk_file(path: Path, concept_id: str, source_url: str = "", citable: bool 
     top_level: list[dict] = []
 
     first_start = sections[0].match_start if sections else len(post_fm_text)
+    raw_title = derive_raw_title(post_fm_text[0:first_start], frontmatter)
     top_level.append({
         "headingPath": [display_name],
         "start": 0,
@@ -452,6 +471,7 @@ def chunk_file(path: Path, concept_id: str, source_url: str = "", citable: bool 
         "chunks": all_chunks,
         "related_targets": related_targets,
         "display_name": display_name,
+        "raw_title": raw_title,
         "doc_date": doc_date,
     }
 
@@ -508,6 +528,7 @@ def main():
             {
                 "conceptId": concept_id,
                 "name": result["display_name"],
+                "title": result["raw_title"],
                 "kind": "architecture",
                 "aliases": [],
                 "related": normalize_related_targets(result["related_targets"]),

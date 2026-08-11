@@ -4,7 +4,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PrismaClient } from '../../src/generated/prisma/client.js';
-import { ingestCandidates, ingestChunks, type ChunkLine, type CandidateLine } from '../../scripts/ingest-corpus.js';
+import {
+  ingestCandidates,
+  ingestChunks,
+  ingestRelatedEdgeConcepts,
+  ingestConceptTerms,
+  type ChunkLine,
+  type CandidateLine,
+} from '../../scripts/ingest-corpus.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '../..');
@@ -241,6 +248,107 @@ describe('scripts/ingest-corpus.ts (integration)', () => {
       expect(row?.status).toBe('active'); // unchanged
       expect(row?.name).toBe('Already Active'); // untouched, not overwritten by the re-run
     });
+  });
+
+  describe('Related-edge concepts and concept_terms (User Story 2)', () => {
+    const CANDIDATES_PATH = join(ROOT, 'corpus/_meta/candidates/azure.jsonl');
+
+    function readRealCandidates(): CandidateLine[] {
+      return readFileSync(CANDIDATES_PATH, 'utf-8')
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l));
+    }
+
+    afterEach(async () => {
+      // ingestConceptTerms rebuilds the WHOLE table on every call, by design
+      // (docs/DECISIONS.md 2026-08-10: rebuilds must not depend on leftover
+      // rows from a previous run) -- so a test that calls it with synthetic
+      // data must restore the real corpus's terms afterward, or every other
+      // test/run sees a table missing the title-derived terms that only the
+      // real candidate file carries.
+      let realCandidates: CandidateLine[];
+      try {
+        realCandidates = readRealCandidates();
+      } catch {
+        return; // no real candidates file in this environment -- nothing to restore
+      }
+      if (realCandidates.length > 0) {
+        await ingestConceptTerms(prisma, realCandidates);
+      }
+    });
+
+    it('creates a related-edge concept as a candidate with no chunks, and is idempotent', async () => {
+      const relatedId = `${testConceptId}-related`;
+      const candidate: CandidateLine = {
+        conceptId: testConceptId,
+        name: 'Test Concept',
+        kind: 'architecture',
+        aliases: [],
+        related: [relatedId],
+        addedFrom: 'seed',
+        sourceFile: 'test.md',
+      };
+
+      try {
+        const createdFirst = await ingestRelatedEdgeConcepts(prisma, [candidate]);
+        expect(createdFirst).toEqual([relatedId]);
+
+        const row = await prisma.concept.findUnique({ where: { conceptId: relatedId } });
+        expect(row?.status).toBe('candidate');
+        expect(row?.hasCorpus).toBe(false);
+        expect(row?.addedFrom).toBe('related-edge');
+        const chunkCount = await prisma.docChunk.count({ where: { patternId: relatedId } });
+        expect(chunkCount).toBe(0);
+
+        const createdSecond = await ingestRelatedEdgeConcepts(prisma, [candidate]);
+        expect(createdSecond).toEqual([]); // nothing new the second time
+
+        const count = await prisma.concept.count({ where: { conceptId: relatedId } });
+        expect(count).toBe(1); // not duplicated
+      } finally {
+        await prisma.concept.deleteMany({ where: { conceptId: relatedId } });
+      }
+    });
+
+    it('reports every cross-concept term collision before failing, not just the first (FR-015)', async () => {
+      const idA = `${testConceptId}-a`;
+      const idB = `${testConceptId}-b`;
+      const colliding: CandidateLine[] = [
+        { conceptId: idA, name: 'Same Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'a.md' },
+        { conceptId: idB, name: 'Same Name', title: null, kind: 'architecture', aliases: [], related: [], addedFrom: 'seed', sourceFile: 'b.md' },
+      ];
+
+      await expect(ingestConceptTerms(prisma, colliding)).rejects.toThrow(
+        new RegExp(`${idA}.*${idB}|${idB}.*${idA}`, 's'),
+      );
+    });
+
+    it('produces stable term and concept counts across two consecutive full runs over the real corpus (FR-023)', async () => {
+      let realCandidates: CandidateLine[];
+      try {
+        realCandidates = readRealCandidates();
+      } catch {
+        console.warn('[test] corpus/_meta/candidates/azure.jsonl not present -- run chunk_azure.py first; skipping');
+        return;
+      }
+      if (realCandidates.length === 0) return;
+
+      await ingestCandidates(prisma, realCandidates);
+      await ingestRelatedEdgeConcepts(prisma, realCandidates);
+      await ingestConceptTerms(prisma, realCandidates);
+      const termsAfterFirst = await prisma.conceptTerm.count();
+      const conceptsAfterFirst = await prisma.concept.count();
+
+      const createdSecond = await ingestRelatedEdgeConcepts(prisma, realCandidates);
+      await ingestConceptTerms(prisma, realCandidates);
+      const termsAfterSecond = await prisma.conceptTerm.count();
+      const conceptsAfterSecond = await prisma.concept.count();
+
+      expect(createdSecond).toEqual([]);
+      expect(termsAfterSecond).toBe(termsAfterFirst);
+      expect(conceptsAfterSecond).toBe(conceptsAfterFirst);
+    }, 30_000);
   });
 
   describe('Real corpus round-trip (User Story 1)', () => {

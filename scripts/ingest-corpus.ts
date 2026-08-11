@@ -6,7 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
-import { PrismaClient, ConceptKind, ConceptStatus } from '../src/generated/prisma/client.js';
+import { PrismaClient, ConceptKind, ConceptStatus, TermType } from '../src/generated/prisma/client.js';
+import { expandConceptTerms, type ConceptTermSource } from '../src/corpus/expand-concept-terms.js';
 
 // Idempotent, content-hash-keyed ingest of chunk_azure.py's two JSONL outputs
 // into Postgres via the Prisma client NestJS itself generates — see
@@ -38,6 +39,7 @@ export type ChunkLine = z.infer<typeof ChunkLineSchema>;
 export const CandidateLineSchema = z.object({
   conceptId: z.string().min(1),
   name: z.string().min(1),
+  title: z.string().min(1).nullable().optional(),
   kind: z.enum(['language', 'framework', 'platform', 'architecture', 'practice', 'tool', 'domain']),
   aliases: z.array(z.string()),
   related: z.array(z.string()),
@@ -152,6 +154,109 @@ export async function ingestChunks(prisma: PrismaClient, chunks: ChunkLine[]) {
   );
 }
 
+// Mirrors chunk_azure.py's derive_display_name() fallback branch (no
+// frontmatter/H1 title available) so a related-edge stub's name reads the
+// same way an admitted concept's would.
+function humanizeConceptId(conceptId: string): string {
+  return conceptId
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
+ * Creates a Concept row, status "candidate" / hasCorpus false / no chunks,
+ * for every id referenced by some admitted concept's `related` array but
+ * never itself admitted -- the "known but no material yet" state the
+ * two-table model was designed for (docs/DECISIONS.md 2026-08-08, and the
+ * 2026-08-10 "concept point cloud" entry that measured ~20 such ids).
+ * Idempotent: an id already present in the concepts table under ANY status
+ * is left untouched, so a second run creates nothing new.
+ */
+export async function ingestRelatedEdgeConcepts(
+  prisma: PrismaClient,
+  candidates: CandidateLine[],
+): Promise<string[]> {
+  const existing = await prisma.concept.findMany({ select: { conceptId: true } });
+  const known = new Set(existing.map((r) => r.conceptId));
+
+  const referenced = new Set<string>();
+  for (const c of candidates) {
+    for (const relatedId of c.related) referenced.add(relatedId);
+  }
+
+  const missing = [...referenced].filter((id) => !known.has(id)).sort();
+  for (const conceptId of missing) {
+    await prisma.concept.create({
+      data: {
+        conceptId,
+        name: humanizeConceptId(conceptId),
+        kind: ConceptKind.domain,
+        related: [],
+        hasCorpus: false,
+        status: ConceptStatus.candidate,
+        addedFrom: 'related-edge',
+      },
+    });
+  }
+  console.log(
+    `[ingest-corpus] related-edge concepts: ${missing.length} created (${referenced.size} referenced total)`,
+  );
+  return missing;
+}
+
+/**
+ * Rebuilds concept_terms from scratch on every run (docs/DECISIONS.md
+ * 2026-08-10, "concept_terms replaces Concept.aliases"): collision
+ * detection must not depend on insertion order or on rows left over from a
+ * previous run, and a full delete + recreate is the simplest way to
+ * guarantee that. Reports every cross-concept collision before failing
+ * (FR-015) -- not just the first.
+ *
+ * Sources terms for every concept in the database, not just this run's
+ * candidates: on a second run, related-edge stubs created by an earlier
+ * invocation of ingestRelatedEdgeConcepts already exist and would
+ * otherwise lose their terms in the delete + recreate without being
+ * regenerated (their own idempotency check reports zero newly created).
+ */
+export async function ingestConceptTerms(prisma: PrismaClient, candidates: CandidateLine[]): Promise<void> {
+  const candidateIds = new Set(candidates.map((c) => c.conceptId));
+  const allConcepts = await prisma.concept.findMany({ select: { conceptId: true, name: true } });
+
+  const sources: ConceptTermSource[] = [
+    ...candidates.map((c) => ({ conceptId: c.conceptId, name: c.name, title: c.title ?? null })),
+    ...allConcepts
+      .filter((row) => !candidateIds.has(row.conceptId))
+      .map((row) => ({ conceptId: row.conceptId, name: row.name, title: null })),
+  ];
+
+  const owners = new Map<string, Set<string>>(); // normalized term -> owning conceptIds
+  const rows: Array<{ term: string; displayTerm: string; conceptId: string; termType: TermType }> = [];
+
+  for (const source of sources) {
+    for (const t of expandConceptTerms(source)) {
+      const ownerSet = owners.get(t.term) ?? new Set<string>();
+      ownerSet.add(source.conceptId);
+      owners.set(t.term, ownerSet);
+      rows.push({ term: t.term, displayTerm: t.displayTerm, conceptId: source.conceptId, termType: t.termType as TermType });
+    }
+  }
+
+  const collisions = [...owners.entries()].filter(([, concepts]) => concepts.size > 1);
+  if (collisions.length > 0) {
+    const report = collisions
+      .map(([term, concepts]) => `  "${term}" claimed by: ${[...concepts].join(', ')}`)
+      .join('\n');
+    throw new Error(`[ingest-corpus] ${collisions.length} cross-concept term collision(s):\n${report}`);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.conceptTerm.deleteMany({});
+    await tx.conceptTerm.createMany({ data: rows });
+  });
+  console.log(`[ingest-corpus] concept_terms: ${rows.length} terms over ${sources.length} concepts, 0 collisions`);
+}
+
 async function main() {
   const prisma = new PrismaClient();
   try {
@@ -162,7 +267,9 @@ async function main() {
     // Concepts before chunks: DocChunk.patternId is a foreign key to
     // Concept.conceptId (data-model.md), so the referenced row must exist first.
     await ingestCandidates(prisma, candidates);
+    await ingestRelatedEdgeConcepts(prisma, candidates);
     await ingestChunks(prisma, chunks);
+    await ingestConceptTerms(prisma, candidates);
   } finally {
     await prisma.$disconnect();
   }
