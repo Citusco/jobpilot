@@ -1,40 +1,34 @@
 import 'dotenv/config';
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
-import {
-  PrismaClient,
-  ConceptKind,
-  ConceptStatus,
-  ChunkKind,
-  KindConfidence,
-} from '../src/generated/prisma/client.js';
+import { PrismaClient, ConceptKind, ConceptStatus } from '../src/generated/prisma/client.js';
 
 // Idempotent, content-hash-keyed ingest of chunk_azure.py's two JSONL outputs
 // into Postgres via the Prisma client NestJS itself generates — see
 // specs/005-corpus-ingest-foundation/research.md §1 (why this script, not a
-// Python-to-Postgres connection) and §3 (the JSONL line schemas below).
+// Python-to-Postgres connection) and §3 (the JSONL line schemas below), and
+// specs/006-corpus-structure-rebuild/data-model.md for the reshaped DocChunk.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const CHUNKS_PATH = join(ROOT, 'corpus/_meta/chunks/azure.jsonl');
 const CANDIDATES_PATH = join(ROOT, 'corpus/_meta/candidates/azure.jsonl');
-const REPORT_PATH = join(ROOT, 'corpus/reports/unmapped-headings-azure.md');
 
 export const ChunkLineSchema = z.object({
   chunkId: z.string().min(1),
   patternId: z.string().min(1),
-  kind: z.enum(['cost', 'benefit', 'when', 'example', 'meta', 'unmapped']),
-  label: z.string().min(1),
+  headingPath: z.array(z.string().min(1)).min(1),
+  parentChunkId: z.string().min(1).nullable(),
+  sourceOffset: z.number().int().nonnegative(),
+  sourceLength: z.number().int().positive(),
   content: z.string().min(1),
-  contextPrefix: z.string().min(1),
   sourceUrl: z.string().min(1),
   citable: z.boolean(),
-  kindConfidence: z.enum(['regex', 'llm', 'manual']),
   docDate: z.string().nullable(),
   contentHash: z.string().min(1),
   sourceFile: z.string().min(1),
@@ -77,7 +71,6 @@ export async function ingestCandidates(prisma: PrismaClient, candidates: Candida
       data: {
         conceptId: c.conceptId,
         name: c.name,
-        aliases: c.aliases,
         kind: c.kind as ConceptKind,
         related: c.related,
         hasCorpus: false, // set true below, once this pattern's DocChunk rows exist
@@ -117,23 +110,34 @@ export async function ingestChunks(prisma: PrismaClient, chunks: ChunkLine[]) {
       continue; // true no-op: this file's content hasn't changed (research.md §5)
     }
 
+    // Parents (parentChunkId null) must be inserted before children: a
+    // multi-row createMany becomes one INSERT statement, but Postgres checks
+    // a NOT DEFERRABLE foreign key immediately after each row is inserted,
+    // not batched to the end of the statement — a child row referencing a
+    // parent not yet present in the table fails even within the same
+    // statement, regardless of array order within a single createMany call.
+    const parents = rows.filter((r) => r.parentChunkId === null);
+    const children = rows.filter((r) => r.parentChunkId !== null);
+    const toRow = (r: ChunkLine) => ({
+      chunkId: r.chunkId,
+      patternId: r.patternId,
+      headingPath: r.headingPath,
+      parentChunkId: r.parentChunkId,
+      sourceOffset: r.sourceOffset,
+      sourceLength: r.sourceLength,
+      content: r.content,
+      sourceUrl: r.sourceUrl,
+      citable: r.citable,
+      docDate: r.docDate ? new Date(r.docDate) : null,
+      contentHash: r.contentHash,
+    });
+
     await prisma.$transaction(async (tx) => {
       await tx.docChunk.deleteMany({ where: { patternId } });
-      await tx.docChunk.createMany({
-        data: rows.map((r) => ({
-          chunkId: r.chunkId,
-          patternId: r.patternId,
-          kind: r.kind as ChunkKind,
-          label: r.label,
-          content: r.content,
-          contextPrefix: r.contextPrefix,
-          sourceUrl: r.sourceUrl,
-          citable: r.citable,
-          kindConfidence: r.kindConfidence as KindConfidence,
-          docDate: r.docDate ? new Date(r.docDate) : null,
-          contentHash: r.contentHash,
-        })),
-      });
+      await tx.docChunk.createMany({ data: parents.map(toRow) });
+      if (children.length > 0) {
+        await tx.docChunk.createMany({ data: children.map(toRow) });
+      }
       await tx.concept.updateMany({ where: { conceptId: patternId }, data: { hasCorpus: true } });
     });
 
@@ -148,21 +152,6 @@ export async function ingestChunks(prisma: PrismaClient, chunks: ChunkLine[]) {
   );
 }
 
-function writeUnmappedReportPassthrough() {
-  // The unmapped-headings report is written by chunk_azure.py (pure text
-  // processing, no DB dependency — see plan.md's Project Structure). This
-  // ingest script only confirms it exists; it does not regenerate it.
-  if (!existsSync(REPORT_PATH)) {
-    mkdirSync(dirname(REPORT_PATH), { recursive: true });
-    writeFileSync(
-      REPORT_PATH,
-      '# Unmapped headings — azure corpus\n\n(not yet generated — run corpus/tools/chunk_azure.py first)\n',
-      'utf-8',
-    );
-    console.warn(`[ingest-corpus] WARNING: ${REPORT_PATH} did not exist; wrote a placeholder`);
-  }
-}
-
 async function main() {
   const prisma = new PrismaClient();
   try {
@@ -174,7 +163,6 @@ async function main() {
     // Concept.conceptId (data-model.md), so the referenced row must exist first.
     await ingestCandidates(prisma, candidates);
     await ingestChunks(prisma, chunks);
-    writeUnmappedReportPassthrough();
   } finally {
     await prisma.$disconnect();
   }
