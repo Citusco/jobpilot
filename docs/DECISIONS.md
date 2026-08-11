@@ -1016,3 +1016,113 @@ decision the first must not exist on that side at all and the second belongs to 
 service, so both are removed. A declared dependency is a statement about what a service does;
 these two currently state the opposite of the boundary.
 **Status**: active
+
+## 2026-08-11 — Implementation decisions settled while building SCRUM-44, not fixed by the spec
+
+**Decision**: five judgment calls came up executing `specs/006-corpus-structure-rebuild`'s tasks
+that the spec, plan, and data-model left open. Recorded here per that feature's own instruction
+to append anything decided during implementation that wasn't already settled.
+
+1. **Chunk content is never trimmed of surrounding whitespace.** A section's span runs from
+   immediately after its heading line's newline through the start of the next heading line (or
+   EOF), verbatim — no leading/trailing blank-line stripping. This makes the coverage invariant
+   trivial to prove by construction: sections partition (post-frontmatter text minus heading-line
+   bytes) exactly, with the "Full body text" denominator already established by the `kind`-filter
+   measurement above. Trimming would have required deciding where the trimmed whitespace
+   "belongs" for coverage-accounting purposes, for a purely cosmetic gain — a stray leading
+   newline in a stored `content` field costs nothing a downstream consumer can't strip at display
+   time, and the stored field itself stays exactly byte-reproducible.
+
+2. **A preamble's `chunk_id` heading-path-slug is the literal reserved segment `preamble`.**
+   `data-model.md`'s scheme (`{source}:{concept}:{heading-path-slug}`) has no example for a
+   title-only `headingPath` (length 1, no segments below the title to slugify). `azure:cqrs:cqrs`
+   was considered and rejected as confusing; `preamble` is unambiguous and — like any other
+   heading-path-slug — still goes through the existing content-hash collision disambiguation if a
+   document ever has a literal `## Preamble` heading of its own.
+
+3. **Split-section parent rows ARE stored as full-span `doc_chunk` rows, and coverage is computed
+   over leaf chunks only.** The self-referencing `parentChunkId` foreign key requires the parent
+   row to exist, so a split section produces one parent row (full section span, `parentChunkId`
+   null) plus N child rows (sub-spans). Counting both toward "coverage" would double-count claimed
+   bytes for every split section. The invariant that matters is over the *leaves* of the
+   parent/child tree — a chunk with no children, whether an unsplit section or a child of a split
+   one — and that is what `test_real_corpus_overall_byte_coverage_is_total` and
+   `test_real_corpus_leaf_chunks_reconstruct_every_document_exactly` both compute against.
+
+4. **Directive-line stripping (`split_around_directives` / `strip_directives`, from
+   `specs/005-corpus-ingest-foundation`) is removed, not carried forward.** The old chunker
+   excised `:::image:::`-style directive lines from content and emitted separate chunks around
+   the gap — under the old `kind`-classified, partial-coverage world this was harmless, but under
+   this feature's "every byte accounted for" invariant it is a real, unrecoverable gap: the
+   directive line's bytes belonged to no chunk at all. Directive markup is now stored verbatim as
+   part of whatever chunk it falls inside, which costs nothing (it is inert text to any downstream
+   consumer) and preserves exactness. The now-orphaned functions and their tests were deleted
+   rather than left dead in the module.
+
+5. **The candidate JSONL gains a `title` field** (`corpus/_meta/candidates/azure.jsonl`): the raw
+   H1/frontmatter title, unstripped of a trailing "Pattern"/"Architecture Style" suffix — distinct
+   from the already-existing `name` field, which has that suffix removed. `data-model.md`'s
+   `ConceptTerm` population table names "H1 or frontmatter title" as a term source, but no field
+   carrying that raw string existed anywhere before this feature; `chunk_azure.py` now captures it
+   (frontmatter `title` first, falling back to the document's H1, searched only within the
+   preamble so a `# ` line inside a later code sample is never mistaken for the title).
+
+   **Corrects** the "124 terms over 49 concepts" figure `data-model.md` recorded as measured:
+   that number predates the `title` field existing, so it could not have been measured against
+   this implementation. The actual figure, measured after implementing: **105 terms over the 49
+   admitted concepts** (2.14/concept), rising to **147 terms over all 70 concepts** (49 admitted +
+   21 related-edge) once related-edge stubs are included. The gap from 124 is fully explained, not
+   a defect: for the 43 non-architecture-style pattern documents, the raw title (e.g. "Ambassador
+   Pattern") and the mechanically-derived "name + trailing pattern" variant (e.g. "Ambassador
+   pattern") normalize identically, so they collapse to one `title`-type term under the existing
+   precedence rule — 2 terms/concept for those 43, 3 for the 6 architecture-style documents (whose
+   raw title, "X Architecture Style", does not collide with "X pattern"). `SC-003` (every phrase
+   resolves to exactly one concept) holds regardless of the exact count: 0 cross-concept
+   collisions, verified by `tests/unit/corpus/concept-terms.test.ts` against the real candidate
+   file.
+**Status**: active
+
+## 2026-08-11 — Related-edge stub concepts default to `kind: domain`; embedding input is name + terms + a 500-character opening
+
+**Decision**: two further judgment calls, both additive and easily revised:
+
+1. A related-edge stub concept (no admitted material, id/name only) is created with
+   `kind: ConceptKind.domain` — a generic default, since its real kind is genuinely unknown until
+   material is admitted for it. `name` is derived the same way `chunk_azure.py`'s own
+   no-frontmatter fallback already works (humanize the id: split on `-`, capitalize each word).
+2. The text submitted for embedding (FR-019) is `name`, then `also known as: <comma-joined
+   terms>` (its `concept_terms` entries, excluding the `id`-type one — a slug adds nothing a
+   name-based embedding needs), then the first **500 characters** of its preamble chunk where
+   material exists. 500 was chosen as "enough to carry the definition, not so much it dilutes
+   toward the rest of the document" — no measurement was taken to tune this number, and it is
+   cheap to change (recomputing ~70 vectors costs seconds, per the existing embedding-dimension
+   entry's reversibility note).
+
+**Why not deferred to a spec update**: both are additive, touch no identifier, and are exactly
+the kind of "nullable column / nullable default" choice the 2026-08-10 "Reversibility decides
+what must be settled now" entry says doesn't need to be settled in advance.
+**Status**: active
+
+## 2026-08-11 — Measured: the positive/negative similarity baselines overlap
+
+**Decision**: record the measurement FR-022 exists to produce, without acting on it.
+
+```
+positive (related-edge pairs, n=107)     p10 = 0.30
+negative (all other pairs, n=2,308)      p90 = 0.44
+```
+
+Measured twice — once against the real corpus after a normal ingest, once again after a full
+`prisma migrate reset` and rebuild from zero — with consistent results (p10 0.3016–0.3017, p90
+0.4419 both times; embeddings vary by a few thousandths of a percent run to run, consistent with
+provider-side non-determinism, not a bug).
+
+**What this means**: the positive baseline's 10th percentile sits *below* the negative baseline's
+90th percentile. Per the 2026-08-10 "Embedding dimension is 1536" entry's own reconsideration
+trigger — "if they overlap heavily, 1536 is not separating this concept set and `large` is worth
+trying" — that trigger has now fired, on real data. This entry records the fact; it does not act
+on it. Trying `text-embedding-3-large` is out of scope for SCRUM-44, which is about the corpus
+build finishing and reporting the evidence (FR-022 says exactly this — "do not choose a
+threshold here"), not about closing the loop that evidence opens. The next feature that resolves
+a JD phrase against these vectors should read this entry first.
+**Status**: active
