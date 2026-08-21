@@ -45,10 +45,9 @@ import requests
 import yaml
 from bs4 import BeautifulSoup
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
 SOURCES_YAML = CORPUS / "sources.yaml"
-RAW_DIR = CORPUS / "raw"
+RAW_DIR = raw_root()
 META_DIR = CORPUS / "_meta"
 DISCOVER_DIR = META_DIR / "discover"
 DISCOVER_CACHE_DIR = META_DIR / "discover-cache"
@@ -340,7 +339,7 @@ def cmd_fetch(sources, only):
                 "license": source.get("license"),
                 "license_tier": source.get("license_tier"),
                 "citable": source.get("citable"),
-                "local_path": str(dest.relative_to(CORPUS)),
+                "local_path": "raw/" + str(dest.relative_to(RAW_DIR)).replace(chr(92), "/"),
             })
         MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
         with open(MANIFEST_DIR / f"{sid}.jsonl", "w", encoding="utf-8") as f:

@@ -85,7 +85,7 @@ def _require_real_corpus() -> None:
     missing = [
         rel
         for rel, entry in _load_manifest_entries().items()
-        if not (ca.CORPUS / entry["local_path"]).exists()
+        if not ca.resolve_local_path(entry["local_path"]).exists()
     ]
     if missing:
         pytest.fail(
@@ -393,7 +393,7 @@ def test_real_corpus_leaf_chunks_reconstruct_every_document_exactly():
     assert len(eligible) > 0
     for rel in eligible:
         entry = manifest[rel]
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result = ca.chunk_file(path, concept_id, source_file=rel)
         post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
@@ -407,7 +407,7 @@ def test_real_corpus_content_equals_source_span_exactly():
     eligible, manifest = _eligible_files()
     for rel in eligible:
         entry = manifest[rel]
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result = ca.chunk_file(path, concept_id, source_file=rel)
         post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
@@ -423,7 +423,7 @@ def test_real_corpus_parent_child_spans_nest_and_children_cover_parent_exactly()
     found_a_split = False
     for rel in eligible:
         entry = manifest[rel]
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result = ca.chunk_file(path, concept_id, source_file=rel)
         by_id = {c["chunkId"]: c for c in result["chunks"]}
@@ -459,7 +459,7 @@ def test_real_corpus_heading_path_root_is_document_title_and_preamble_is_singlet
     eligible, manifest = _eligible_files()
     for rel in eligible:
         entry = manifest[rel]
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result = ca.chunk_file(path, concept_id, source_file=rel)
         title = result["display_name"]
@@ -482,7 +482,7 @@ def test_real_corpus_no_chunk_id_collisions_across_whole_build():
     all_ids: list[str] = []
     for rel in eligible:
         entry = manifest[rel]
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result = ca.chunk_file(path, concept_id, source_file=rel)
         all_ids.extend(c["chunkId"] for c in result["chunks"])
@@ -495,7 +495,7 @@ def test_real_corpus_two_runs_produce_identical_ids_spans_and_counts():
     eligible, manifest = _eligible_files()
     for rel in eligible[:10]:  # a representative sample keeps this fast; full-corpus determinism
         entry = manifest[rel]  # is additionally exercised implicitly by every other real-corpus test
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result_a = ca.chunk_file(path, concept_id, source_file=rel)
         result_b = ca.chunk_file(path, concept_id, source_file=rel)
@@ -513,7 +513,7 @@ def test_real_corpus_overall_byte_coverage_is_total():
     total_leaf_bytes = 0
     for rel in eligible:
         entry = manifest[rel]
-        path = ca.CORPUS / entry["local_path"]
+        path = ca.resolve_local_path(entry["local_path"])
         concept_id = ca.derive_concept_id(Path(rel).stem)
         result = ca.chunk_file(path, concept_id, source_file=rel)
         post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))

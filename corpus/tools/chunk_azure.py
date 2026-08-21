@@ -21,9 +21,8 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
-RAW_AZURE = CORPUS / "raw" / "azure"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
+RAW_AZURE = raw_root() / "azure"
 MANIFEST_PATH = CORPUS / "_meta" / "manifest" / "azure.jsonl"
 CHUNKS_OUT = CORPUS / "_meta" / "chunks" / "azure.jsonl"
 CANDIDATES_OUT = CORPUS / "_meta" / "candidates" / "azure.jsonl"
@@ -505,7 +504,7 @@ def main():
 
     for rel in eligible_rel_paths:
         entry = manifest[rel]
-        path = CORPUS / entry["local_path"]
+        path = resolve_local_path(entry["local_path"])
         concept_id = derive_concept_id(Path(rel).stem)
         result = chunk_file(
             path,

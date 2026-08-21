@@ -10,13 +10,22 @@ ones — running ingest before the chunker loads the previous run's output and l
 
 ```
 Postgres running, DATABASE_URL set in .env at the repo root
-corpus/raw/azure/ present -- gitignored and 502 MB; re-fetch if absent (step 0)
-corpus/_meta/candidates/azure.jsonl present -- tracked as of the prerequisite branch
+JOBPILOT_CORPUS_RAW pointing at the shared corpus, outside any worktree
+corpus/_meta/candidates/azure.jsonl present -- tracked
 AWS credentials able to read the secret agent-service uses, for step 4 only
 ```
 
-`corpus/raw/` is not committed. The recovery path is re-fetch and verify against
-`corpus/_meta/manifest/azure.jsonl`, not reading a local copy.
+**Set `JOBPILOT_CORPUS_RAW` before anything else.** It points at the raw corpus, which lives
+outside the repository on purpose: kept inside a worktree it is invisible to `git status`, so
+tooling that reclaims a worktree with "no uncommitted changes" takes it with no warning. That is
+how 326 MB was lost on 2026-08-21. One shared copy also means worktrees stop each fetching their
+own.
+
+```bash
+export JOBPILOT_CORPUS_RAW=D:/aieng/jobpilot-corpus
+```
+
+Unset, it falls back to `corpus/raw/` inside the tree, which works but reintroduces the hazard.
 
 ## 0. Fetch sources, only if `corpus/raw/azure/` is missing
 

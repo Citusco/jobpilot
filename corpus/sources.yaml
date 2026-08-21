@@ -24,6 +24,7 @@ sources:
   - id: azure
     kind: git
     repo: https://github.com/MicrosoftDocs/architecture-center.git
+    commit: a8c749f836cfa2d7f03e415de4373b2b8c602f33
     paths:
       - docs/patterns
       - docs/guide/architecture-styles
@@ -37,6 +38,7 @@ sources:
   - id: dotnet
     kind: git
     repo: https://github.com/dotnet/docs.git
+    commit: d74ba594d6d72cada5cb51f6ef94c8b618f2834a
     paths:
       - docs/csharp
       - docs/standard
@@ -49,6 +51,7 @@ sources:
   - id: aspnet
     kind: git
     repo: https://github.com/dotnet/AspNetCore.Docs.git
+    commit: bb91b97c63cb0c2a66227c069e2ed903fd22eced
     paths:
       - aspnetcore
     license: CC-BY-4.0
@@ -63,6 +66,7 @@ sources:
   - id: efcore
     kind: git
     repo: https://github.com/dotnet/EntityFramework.Docs.git
+    commit: 7ca120dcb01fa940686da9d3b9c8dd381a93e520
     paths:
       - entity-framework/core
     license: CC-BY-4.0
@@ -77,6 +81,7 @@ sources:
   - id: react
     kind: git
     repo: https://github.com/reactjs/react.dev.git
+    commit: c7d6b700038c63d1aaf2c649af1aefe01ebbacac
     paths:
       - src/content/learn
       - src/content/reference
@@ -88,6 +93,7 @@ sources:
   - id: ts
     kind: git
     repo: https://github.com/microsoft/TypeScript-Website.git
+    commit: c8170c35bda4811c9516cbb69c39241ae4beb6d9
     paths:
       - packages/documentation/copy/en
     license: CC-BY-4.0
@@ -103,6 +109,7 @@ sources:
   - id: nextjs
     kind: git
     repo: https://github.com/vercel/next.js.git
+    commit: 4be2ee7443820454c5c7b802cc8bfed516856939
     paths:
       - docs
     license: MIT
@@ -113,6 +120,7 @@ sources:
   - id: mdn
     kind: git
     repo: https://github.com/mdn/content.git
+    commit: 285179734bb0505a755c76aa556b6cb12d81b643
     paths:
       - files/en-us/web/performance
       - files/en-us/web/security
@@ -129,6 +137,7 @@ sources:
   - id: owasp
     kind: git
     repo: https://github.com/OWASP/CheatSheetSeries.git
+    commit: 1fe8c37a68251af949dd4311f5b548cd236016da
     paths:
       - cheatsheets
     license: CC-BY-SA-4.0
@@ -139,6 +148,7 @@ sources:
   - id: msplay
     kind: git
     repo: https://github.com/microsoft/code-with-engineering-playbook.git
+    commit: 016770e43d8a75be87b98c000c049f07c4a6e6f8
     paths:
       - docs
     license: CC-BY-4.0
@@ -149,6 +159,7 @@ sources:
   - id: googlerev
     kind: git
     repo: https://github.com/google/eng-practices.git
+    commit: 3bb3ec25b3b0199f4940b1aa75f0ac5c5753301c
     paths:
       - review
     license: CC-BY-3.0
@@ -159,6 +170,7 @@ sources:
   - id: 12f
     kind: git
     repo: https://github.com/heroku/12factor.git
+    commit: 1385d2c80bac38c25647651f6f5ec769561828dc
     paths:
       - content/en
     license: MIT (unconfirmed in body text)
@@ -173,6 +185,7 @@ sources:
   - id: mcp
     kind: git
     repo: https://github.com/modelcontextprotocol/docs.git
+    commit: 573dc60c2e7aab2605b29d0bf27194aa7b02e4fb
     paths:
       - docs
     license: MIT
@@ -197,6 +210,7 @@ sources:
   - id: langgraph
     kind: git
     repo: https://github.com/langchain-ai/docs.git
+    commit: 87081c9a7e2e1888aff5712a807f3f872c65de73
     paths:
       - src/oss/langgraph
     license: MIT
@@ -207,6 +221,7 @@ sources:
   - id: openai
     kind: git
     repo: https://github.com/openai/openai-agents-python.git
+    commit: 08fa43c099dc572fed52b60ed99069a3ac92379d
     paths:
       - docs
     license: MIT

@@ -1230,3 +1230,45 @@ and it is worth keeping. What they cannot do is return the original bytes.
 **Not fixed here.** Pinning is a change to `sources.yaml` plus commit-aware fetching in
 `fetch_git.py`, across 20 sources, and it does not belong in a PR about chunking. Recorded as the
 next corpus-layer piece of work, ahead of anything that stores a citation.
+
+## 2026-08-21 — The raw corpus moves outside the working tree, and every git source is pinned
+
+**Decision**: two changes to the corpus layer, both prompted by losing the corpus for real.
+
+1. `corpus/tools/corpus_paths.py` resolves the raw root from `JOBPILOT_CORPUS_RAW`, falling
+   back to `corpus/raw/`. Every tool imports it. Manifest `local_path` values stay written as
+   `raw/<source>/...` no matter where the tree physically lives, so manifests remain portable and
+   no existing record needed rewriting.
+2. All 15 git sources in `corpus/sources.yaml` carry a `commit:` taken from the manifest's
+   recorded `commit_sha`, and `fetch_git.py` fetches that commit rather than the default branch.
+   It refuses to continue if the checked-out sha differs from the pin.
+
+**What happened**: the `corpus-build` worktree was removed at 2026-08-21 18:47:29 — `.git/worktrees`
+and `.claude/worktrees` share that mtime to the millisecond, which is a `git worktree remove`
+rather than a directory deletion, since the latter would leave a prunable registration behind.
+It took 326 MB across 20 sources with it: the only copy.
+
+**Why the safeguard did not fire**: `git worktree remove` refuses to discard a worktree with
+uncommitted changes. That worktree had none — every commit was pushed, `git status` was empty.
+But **"clean" counts only tracked files**, and gitignored data is invisible to it. A worktree
+holding the sole copy of 326 MB looked disposable to the tool that removed it, and no warning was
+possible because git could not see what was at stake.
+
+This generalises past worktrees: any tooling that reasons about "is there unsaved work here"
+answers using the index, so anything deliberately kept out of the index is outside that reasoning.
+The fix is not to be more careful; it is to stop keeping irreplaceable data where the answer is
+computed.
+
+**Why pinning had to come with it**: the documented recovery path was re-fetch plus manifest
+verification. Exercised for real, azure came back at a different commit with 17 of 58 files
+changed and 1 gone — the manifest detected the drift, which is worth having, but could not undo
+it. With the pin in place the same re-fetch now returns **58 of 58 files sha256-identical**, and
+the byte-coverage assertion reproduces the original figures exactly (49 concepts, leaf 765,276 +
+headings 9,732 = 775,008). Recovery is now real rather than nominal.
+
+**Scope and remaining exposure**: the five `html` sources have no commit to pin — they are page
+fetches, and re-fetching them will drift with the upstream site. Their manifests still record a
+per-file `sha256`, so drift stays detectable, and none of them is currently ingested. This
+matters before anything stores a `verbatim` citation: an unpinned source turns an upstream edit
+into a citation that silently stops matching, which `content.includes()` reports only as `false`.
+**Status**: active

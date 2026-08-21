@@ -11,11 +11,9 @@ raw.githubusercontent.com, also pinned — both permalinks, not branch-relative.
 import hashlib
 import json
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
-RAW_DIR = CORPUS / "raw"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
+RAW_DIR = raw_root()
 RESULTS_PATH = CORPUS / "_meta" / "git-fetch-results.json"
 MANIFEST_DIR = CORPUS / "_meta" / "manifest"
 
@@ -47,7 +45,7 @@ def build_one(source_id: str, meta: dict) -> list[dict]:
             "license": meta["license"],
             "license_tier": meta.get("license_tier"),
             "citable": meta.get("citable"),
-            "local_path": str((RAW_DIR.relative_to(CORPUS) / source_id / rel)),
+            "local_path": "raw/" + source_id + "/" + str(rel).replace(chr(92), "/"),
         })
     return rows
 
