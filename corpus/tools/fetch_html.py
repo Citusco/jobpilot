@@ -302,16 +302,47 @@ def url_to_relpath(url: str) -> str:
     return (p.netloc + path).lstrip("/")
 
 
+def _urls_from_manifest(source_id: str) -> list[str]:
+    """The source_url of every row the manifest records for this source, in order."""
+    path = MANIFEST_DIR / f"{source_id}.jsonl"
+    if not path.exists():
+        return []
+    urls = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            url = json.loads(line).get("source_url")
+            if url:
+                urls.append(url)
+    return urls
+
+
 def cmd_fetch(sources, only):
     for source in sources:
         sid = source["id"]
         if only and sid not in only:
             continue
         discover_path = DISCOVER_DIR / f"{sid}.json"
-        if not discover_path.exists():
-            print(f"[{sid}] no discover output at {discover_path} — run --discover first, refusing to fetch blind")
-            continue
-        urls = json.loads(discover_path.read_text(encoding="utf-8"))
+        if discover_path.exists():
+            urls = json.loads(discover_path.read_text(encoding="utf-8"))
+        else:
+            # Fall back to the URLs the manifest already records. corpus/_meta/discover/
+            # is gitignored working state and does not survive losing a worktree, but the
+            # manifest is tracked and carries source_url for every row -- so the set of
+            # pages a source consists of is recoverable without re-crawling the live site.
+            # Re-crawling would additionally return a *different* set, since discovery
+            # walks whatever the site links today.
+            #
+            # This is recovery, not discovery: it reproduces which pages the corpus held,
+            # not their bytes. html sources carry no commit to pin, so content drift stays
+            # possible and is reported against the manifest sha256 afterwards.
+            urls = _urls_from_manifest(sid)
+            if not urls:
+                print(f"[{sid}] no discover output at {discover_path} and no manifest to recover "
+                      f"URLs from — run --discover first, refusing to fetch blind")
+                continue
+            print(f"[{sid}] no discover output; recovered {len(urls)} URLs from the manifest")
         dest_root = RAW_DIR / sid
         dest_root.mkdir(parents=True, exist_ok=True)
         manifest_rows = []
