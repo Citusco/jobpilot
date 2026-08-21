@@ -1326,3 +1326,67 @@ separate it from the noise.
 - None of the five is ingested today, so nothing is broken now. The constraint is on what may be
   admitted later, not on what exists.
 **Status**: active
+
+## 2026-08-21 — Implementation decisions settled while building SCRUM-45 US1, not fixed by the spec
+
+Five points came up building T001–T011 that spec.md, plan.md and the two contracts did not
+settle, plus one place where the implementation diverges from what a contract says.
+
+**1. The evidence-is-a-substring rule is enforced on both sides of the wire, not one.**
+contracts/extract.md states it as a field rule of `/extract`, and plan.md's Constitution Re-Check
+assigns it to the Zod schema. Both are implemented: the extraction node checks each span against
+`state.jd_text` and raises `AgentLLMError` (502), and `buildExtractResponseSchema` checks it again
+against the submitted text. This is not redundancy for its own sake — each side is the last chance
+to catch it before the value crosses out of that side's control, and the failure it prevents is
+the one that hard constraint 1 exists for: a paraphrased span is stored as `evidence` and can
+never be found in the posting it claims to quote. Drift between the two checks is benign, since
+both are the same one-line containment test with no normalisation to disagree about.
+
+**2. The Zod response schema became a factory rather than a constant.** `buildExtractResponseSchema(submittedText)`
+returns the schema. The substring assertion cannot be made without the text, and Zod 3 has no
+parse-time context to pass it through, so binding it at construction is the only shape available.
+The client builds the schema per call.
+
+**3. Merging repeated mentions happens in the service, not at the database.**
+`@@unique([submissionId, normalized])` would reject the second row and take its evidence with it,
+which is the opposite of what FR-003 asks for. The service merges by normalised phrase before
+writing; the constraint remains the backstop. The first surface form seen wins — one of two
+spellings has to be the one displayed, and the posting's first use is as defensible a choice as
+any, provided it is deterministic. Two phrases that both normalise to the empty string therefore
+collapse into one item, which is correct: the constraint would otherwise reject the second.
+
+**4. The unavailable error gained a subclass, so 502 and 503 are actually distinguishable.**
+contracts/http-api.md specifies `502` for "the inference service failed or returned a malformed
+result" and `503` for "unreachable", but the existing client threw one error for both, so the
+documented distinction was unreachable. `AgentOrchestrationUnreachableError extends
+AgentOrchestrationUnavailableError` is thrown from the `fetch` catch — connection refused, DNS
+failure, timeout — and every existing `instanceof AgentOrchestrationUnavailableError` handler
+keeps working unchanged. A timeout counts as unreachable.
+
+**5. The client's extract tests moved from `tests/unit/` to `tests/contract/extract.contract.test.ts`.**
+tasks.md T006 names that path, which did not exist; the tests lived in
+`tests/unit/agent-orchestration/agent-orchestration.client.test.ts`. They now sit beside
+`embed.contract.test.ts`, which they mirror exactly — both stub `fetch` and assert the
+cross-service contract.
+
+**6. A feature-006 assertion was rewritten rather than deleted.**
+`tests/contract/concept-doc-chunk-schema.test.ts` asserted that the corpus migration left
+`jd_submissions` and `candidate_training_directions` untouched. That was true of that migration
+and is deliberately false of the database now. What the assertion protected — that a migration
+does not silently reshape the submission tables — is still worth stating, so it was restated
+against the shape those tables are supposed to have, including that no `status` or
+`rejection_reason` column survives for a sufficiency gate to record a verdict in (FR-022).
+
+**Measured end to end** on 2026-08-21, real provider, real corpus, 2,284-character posting for a
+senior backend platform role: 47 items extracted, 12 `exact`, 35 `unresolved`, 0 `similarity`
+(tier 2 does not exist yet). No non-technical requirement became an item — citizenship, salary,
+hybrid working and the recruiter note were all correctly left out. `rate limiting` and
+`throttling` both appeared and resolved to their own concepts, as designed.
+
+The unresolved list is the informative part, and it splits in two. Some are genuinely outside an
+Azure-patterns corpus — Terraform, Kafka, PostgreSQL, gRPC, PCI-DSS. Others are concepts the
+corpus **does** hold under a different name: `publish/subscribe model` against `publisher-subscriber`,
+`API gateway` against the four gateway patterns, `bulkhead isolation` against `bulkhead`,
+`strangler fig migration` against `strangler-fig`. That second group is precisely the population
+tier 2 exists to recover, and it is now visible as a measurement rather than an argument.
+**Status**: active
