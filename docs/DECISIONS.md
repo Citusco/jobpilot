@@ -1126,3 +1126,107 @@ build finishing and reporting the evidence (FR-022 says exactly this — "do not
 threshold here"), not about closing the loop that evidence opens. The next feature that resolves
 a JD phrase against these vectors should read this entry first.
 **Status**: active
+
+## 2026-08-11 — Correction: the measured baselines do not calibrate resolve's threshold
+
+**Supersedes the conclusion of** *2026-08-11 — Measured: the positive/negative similarity
+baselines overlap*. The measurement itself stands and is not repudiated: related-edge pairs
+p10 = 0.30 over n=107, all other pairs p90 = 0.44 over n=2,308, stable across two full rebuilds.
+What does not follow is the inference drawn from it.
+
+**What was measured versus what FR-022 asks for**:
+
+```
+DESIGN.md 8 specifies      positive = a concept's own aliases used as queries,
+                            where the answer must be that same concept
+                            negative = completely unrelated words
+                            -> a query-to-concept distribution
+
+what was implemented        positive = related-edge pairs between two *different* concepts
+                            negative = every other concept pair
+                            -> a concept-to-concept distribution
+```
+
+These are not the same relation. `related` edges join concepts a reader should be able to tell
+apart — `cqrs` and `event-sourcing`, `throttling` and `rate-limiting`. If those pairs scored
+*high*, that would be evidence `resolve` is likely to confuse them, not evidence the embedding
+is healthy. Used as a positive baseline the sign is inverted.
+
+The superseded entry therefore states that the 2026-08-10 dimension-reconsideration trigger
+"has now fired, on real data". It has not. That trigger concerns whether the model separates a
+query from a concept; nothing measured here bears on it, and no conclusion about
+`text-embedding-3-small` versus `-large` is supported by this data either way.
+
+**Why the specified calibration was not run**: it needs alias phrasings, and `concept_terms`
+holds only mechanically derived entries — hand-authored aliases were deliberately deferred
+until a measurement shows which category automatic resolution fails on. The specified positive
+baseline is therefore not constructible yet. The correct record was "the specified calibration
+cannot be run at this stage, and here is why", rather than substituting a different relation and
+reporting its result against the original trigger.
+
+**What the numbers do say**, stated without overreach: concepts joined by a `related` edge are
+not reliably more similar, under this embedding, than concepts that are not. That is a fact
+about the `related` graph's semantics — those edges record "the author linked these", not "these
+mean nearly the same thing" — and it is mildly reassuring for the point cloud, where edge
+strength and node relevance are meant to be independent signals.
+
+**What must happen before a threshold is chosen**: build a query-side sample that does not come
+from the same source as the concept records — real job-description phrasings are the
+uncontaminated option already available, and Experiment 4's extracted items exist for this. Then
+run DESIGN.md 8's calibration as written. Until then no threshold, and no model comparison,
+rests on evidence.
+
+**Process note**: the substitution was visible in the entry's own labels ("related-edge pairs",
+"all other pairs") and still produced a wrong conclusion that was recorded as active and pointed
+at the next feature. Naming what you measured is not sufficient; the check is whether the thing
+measured is the thing the decision turns on.
+**Status**: active
+
+## 2026-08-11 — Correction: the corpus is not pinned, so re-fetching does not reproduce it
+
+**Corrects** *2026-08-10 — Correction: the raw corpus is re-fetchable, not committed*, which
+claimed "`corpus/sources.yaml` pins each source to an upstream commit". It does not. The same
+claim appears in this feature's migration comment ("reproducible from the source layer,
+re-fetched and verified against `corpus/_meta/manifest/`") and is wrong there too.
+
+**Measured, not reasoned.** The `corpus-build` worktree was deleted, taking the only copy of
+`corpus/raw/` with it, so the documented recovery path was exercised for real:
+
+```
+python corpus/tools/fetch_git.py --only azure
+
+manifest commit_sha   a8c749f836cf...      what SCRUM-44 was built against
+re-fetched commit     fbb66e47c92d         whatever HEAD happened to be
+
+against the 58 manifest entries:   40 identical
+                                   17 changed
+                                    1 gone     (priority-queue-content.md)
+                                    1 added    (59 files now, 50 concept-eligible)
+```
+
+**Why**: `sources.yaml` carries `repo` and `paths` and no commit field, and `fetch_git.py` always
+runs `git clone --depth 1` against the default branch, then records the HEAD it landed on as
+`commit_sha`. Its own log line says "pinned commit {sha}", which reads as though it pinned
+something; it recorded, it did not pin.
+
+**What the manifest is actually good for**: detection, not recovery. The recorded `commit_sha`
+and per-file `sha256` make drift *visible* — that is how the 17/1/1 above was established at all,
+and it is worth keeping. What they cannot do is return the original bytes.
+
+**What this affects**:
+
+- The safety argument for `TRUNCATE doc_chunks` is weaker than the migration comment states. The
+  table can be rebuilt, but from *current* upstream, not from the state it was built against.
+- Verbatim citations are the real exposure. A `verbatim` recorded against a file that upstream
+  has since edited will no longer be found in the re-fetched text, and hard constraint 3's
+  entailment check cannot recover from a substring that has vanished. Nothing depends on this
+  yet — no citations are stored — but the question-generation feature cannot land on an unpinned
+  corpus without accepting silent citation rot.
+- SCRUM-44's reported figures (49 concepts, 490 sections, 607 rows) describe a corpus state that
+  no longer exists locally and cannot be restored. The current tree measures 50 concepts. The
+  assertions are invariants and still hold, which is why the suite passes either way; the
+  headline counts are snapshots and should be read as such.
+
+**Not fixed here.** Pinning is a change to `sources.yaml` plus commit-aware fetching in
+`fetch_git.py`, across 20 sources, and it does not belong in a PR about chunking. Recorded as the
+next corpus-layer piece of work, ahead of anything that stores a citation.

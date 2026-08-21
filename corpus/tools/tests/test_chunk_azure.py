@@ -8,6 +8,7 @@ a passing fixture-only suite. Fixture-based tests below cover the smaller
 mechanics (splitting, slugs, ids) where a hand-built input is clearer than
 hunting for a real example.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -15,7 +16,93 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import chunk_azure as ca  # noqa: E402
 
-MANIFEST_EXISTS = ca.MANIFEST_PATH.exists() and ca.RAW_AZURE.exists()
+_H23_RE = re.compile(r"^#{2,3}[ \t]+\S.*$", re.MULTILINE)
+
+
+def _independent_heading_bytes(post_fm_text: str) -> int:
+    """Counts H2/H3 heading-line bytes with a scan written here rather than
+    borrowed from chunk_azure. Fences are masked by a second implementation on
+    purpose: the check is that two independent readings of the source agree,
+    which they cannot demonstrate if one calls the other."""
+    masked, inside = [], False
+    for line in post_fm_text.split(chr(10)):
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            masked.append("")
+            continue
+        masked.append("" if inside else line)
+    # +1 per heading for the newline the section body starts after
+    return sum(len(m.group(0)) + 1 for m in _H23_RE.finditer(chr(10).join(masked)))
+
+_MISSING_CORPUS_MESSAGE = (
+    "real-corpus assertions cannot run: corpus/raw/azure/ or its manifest is missing."
+    "\n"
+    "Restore it with:  python corpus/tools/fetch_git.py --only azure"
+    "\n"
+    "These tests must not be skipped -- see the docstring above."
+)
+
+def _load_manifest_entries() -> dict:
+    import json
+
+    entries = {}
+    with open(ca.MANIFEST_PATH, encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                row = json.loads(line)
+                entries[row["local_path"]] = row
+    return entries
+
+
+def _require_real_corpus() -> None:
+    """Fails rather than skips when the real corpus is unusable.
+
+    These assertions are the reason this feature exists -- the 69% kind-filter
+    loss and the never-ingested preamble both survived a green fixture-only
+    suite. A skip would let exactly that state recur: the suite reports success
+    while the checks that matter quietly do not run.
+
+    Two distinct causes are separated, because the remedies differ. The corpus
+    may simply be absent, or it may be present but no longer match the manifest
+    it was recorded against -- upstream is fetched unpinned (see the 2026-08-11
+    correction in docs/DECISIONS.md), so re-fetching can legitimately return
+    different bytes than the manifest describes.
+    """
+    import pytest
+
+    if not ca.MANIFEST_PATH.exists() or not ca.RAW_AZURE.exists():
+        pytest.fail(
+            "real-corpus assertions cannot run: corpus/raw/azure/ or its manifest is absent."
+            + chr(10)
+            + "  python corpus/tools/fetch_git.py --only azure"
+            + chr(10)
+            + "  python corpus/tools/filter_md.py"
+            + chr(10)
+            + "These tests must not be skipped -- see the docstring above.",
+            pytrace=False,
+        )
+
+    missing = [
+        rel
+        for rel, entry in _load_manifest_entries().items()
+        if not (ca.CORPUS / entry["local_path"]).exists()
+    ]
+    if missing:
+        pytest.fail(
+            "the corpus on disk does not match its manifest: "
+            + str(len(missing))
+            + " recorded file(s) are absent, e.g. "
+            + missing[0]
+            + "."
+            + chr(10)
+            + "Upstream is fetched unpinned, so a re-fetch can drop or change files the "
+            + "manifest still lists."
+            + chr(10)
+            + "Rebuild the manifest to match what is on disk:"
+            + chr(10)
+            + "  python corpus/tools/filter_md.py && python corpus/tools/build_manifest_git.py",
+            pytrace=False,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +387,7 @@ def test_real_corpus_leaf_chunks_reconstruct_every_document_exactly():
     # which test_real_corpus_overall_byte_coverage_is_total exists to catch
     # instead. See _reconstruct_document's docstring for why these are two
     # separate, non-redundant guarantees.
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     assert len(eligible) > 0
@@ -317,9 +402,7 @@ def test_real_corpus_leaf_chunks_reconstruct_every_document_exactly():
 
 
 def test_real_corpus_content_equals_source_span_exactly():
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     for rel in eligible:
@@ -334,9 +417,7 @@ def test_real_corpus_content_equals_source_span_exactly():
 
 
 def test_real_corpus_parent_child_spans_nest_and_children_cover_parent_exactly():
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     found_a_split = False
@@ -373,9 +454,7 @@ def test_real_corpus_parent_child_spans_nest_and_children_cover_parent_exactly()
 
 
 def test_real_corpus_heading_path_root_is_document_title_and_preamble_is_singleton():
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     for rel in eligible:
@@ -397,9 +476,7 @@ def test_real_corpus_heading_path_root_is_document_title_and_preamble_is_singlet
 
 
 def test_real_corpus_no_chunk_id_collisions_across_whole_build():
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     all_ids: list[str] = []
@@ -413,9 +490,7 @@ def test_real_corpus_no_chunk_id_collisions_across_whole_build():
 
 
 def test_real_corpus_two_runs_produce_identical_ids_spans_and_counts():
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     for rel in eligible[:10]:  # a representative sample keeps this fast; full-corpus determinism
@@ -430,9 +505,7 @@ def test_real_corpus_two_runs_produce_identical_ids_spans_and_counts():
 
 
 def test_real_corpus_overall_byte_coverage_is_total():
-    if not MANIFEST_EXISTS:
-        import pytest
-        pytest.skip("corpus/raw/azure/ not present in this environment")
+    _require_real_corpus()
 
     eligible, manifest = _eligible_files()
     total_source_bytes = 0
@@ -446,18 +519,27 @@ def test_real_corpus_overall_byte_coverage_is_total():
         post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
         total_source_bytes += len(post_fm_text)
 
-        sections = ca.parse_sections(post_fm_text)
-        for s in sections:
-            total_heading_bytes += s.body_start - s.match_start
+        total_heading_bytes += _independent_heading_bytes(post_fm_text)
 
         parent_ids = {c["parentChunkId"] for c in result["chunks"] if c["parentChunkId"]}
         for c in result["chunks"]:
             if c["chunkId"] not in parent_ids:
                 total_leaf_bytes += c["sourceLength"]
 
-    coverage = total_leaf_bytes / (total_source_bytes - total_heading_bytes)
+    # Leaf spans plus heading lines must account for the source exactly. Stated
+    # as a sum, not a ratio, for two reasons. The heading count comes from
+    # _independent_heading_bytes above rather than ca.parse_sections -- deriving
+    # the denominator from the function under test lets the two move together
+    # and cancel out. And this form catches a swallowed heading: its bytes would
+    # be absorbed into the previous body and counted as leaf bytes while the
+    # independent scan still counts them as heading bytes, so the sum overshoots.
+    # A ratio with a self-derived denominator stays at 1.0 through that defect.
+    accounted = total_leaf_bytes + total_heading_bytes
     print(
-        f"\n[coverage] {len(eligible)} concepts, leaf bytes {total_leaf_bytes} / "
-        f"body bytes {total_source_bytes - total_heading_bytes} = {coverage:.4%}"
+        f"\n[coverage] {len(eligible)} concepts: leaf {total_leaf_bytes} + "
+        f"headings {total_heading_bytes} = {accounted} / source {total_source_bytes}"
     )
-    assert round(coverage, 4) == 1.0
+    assert accounted == total_source_bytes, (
+        f"{total_source_bytes - accounted} source bytes unaccounted for "
+        f"(leaf {total_leaf_bytes}, headings {total_heading_bytes})"
+    )
