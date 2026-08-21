@@ -95,11 +95,15 @@ describe('the two edge kinds never merge (FR-012)', () => {
 });
 
 describe('the inferred cut targets a mean degree, not a similarity value (FR-013)', () => {
-  // Six directions spread widely enough that no pair reaches 0.44. A hardcoded 0.44
-  // would return an empty graph here; a degree target still reaches its density.
-  const spread: ConceptForEdges[] = [0, 1.2, 2.4, 3.6, 4.8, 6.0].map((theta, index) =>
-    onCircle(String.fromCharCode(97 + index), theta),
-  );
+  // Six near-orthogonal directions, each leaning slightly towards a shared one, so that
+  // every pairwise similarity lands in a narrow band below 0.44 -- the same shape as the
+  // real corpus, shifted down. A hardcoded 0.44 would return an empty graph here; a
+  // degree target still reaches its density.
+  const spread: ConceptForEdges[] = [0.14, 0.15, 0.16, 0.17, 0.18, 0.19].map((lean, index) => ({
+    conceptId: String.fromCharCode(97 + index),
+    related: [],
+    embedding: Array.from({ length: 6 }, (_, axis) => (axis === index ? 1 + lean : lean)),
+  }));
 
   it('reaches the target even when every similarity is below the value measured today', () => {
     const sims = spread.flatMap((x, i) =>
