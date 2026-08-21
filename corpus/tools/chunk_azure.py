@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Chunk the azure corpus per DESIGN.md §7.5 / spec.md FR-006 through FR-015,
-FR-019, FR-023, FR-008a, FR-013a (specs/005-corpus-ingest-foundation).
+"""Chunk the azure corpus per docs/DECISIONS.md's 2026-08-10 entries and
+specs/006-corpus-structure-rebuild (structure-first, size-bounded hierarchical
+chunking). Every section of every admitted document is stored — nothing is
+filtered on the basis of what its heading is called (the abolished `kind`
+subsystem discarded 69% of body text and then reported it missing).
 
-Reads corpus/raw/azure/, writes three outputs, all pure text processing with
-zero database access (research.md §1):
+Reads corpus/raw/azure/, writes two outputs, all pure text processing with
+zero database access:
     corpus/_meta/chunks/azure.jsonl       one row per DocChunk candidate
     corpus/_meta/candidates/azure.jsonl   one row per Concept candidate (49)
-    corpus/reports/unmapped-headings-azure.md
 
-Implemented directly from the spec's functional requirements — NOT derived
-from, or validated against, any prior measurement script (see this repo's
-tasks.md and docs/DECISIONS.md's 2026-08-08 measurement-first-discipline
-entry for why that distinction matters).
+There is no unmapped-headings report any more: nothing is unmapped.
 """
 import argparse
 import datetime
@@ -22,17 +21,15 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
-RAW_AZURE = CORPUS / "raw" / "azure"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
+RAW_AZURE = raw_root() / "azure"
 MANIFEST_PATH = CORPUS / "_meta" / "manifest" / "azure.jsonl"
 CHUNKS_OUT = CORPUS / "_meta" / "chunks" / "azure.jsonl"
 CANDIDATES_OUT = CORPUS / "_meta" / "candidates" / "azure.jsonl"
-REPORT_OUT = CORPUS / "reports" / "unmapped-headings-azure.md"
 
 SOURCE_ID = "azure"
 
-# --- SC-005: concept-eligible file scope -----------------------------------
+# --- concept-eligible file scope --------------------------------------------
 
 EXCLUDED_FILES = {
     "README.md",
@@ -55,7 +52,7 @@ def is_concept_eligible(rel_path: str) -> bool:
     )
 
 
-# --- FR-023: concept_id normalization ---------------------------------------
+# --- concept_id normalization ------------------------------------------------
 
 _SUFFIX_RE = re.compile(r"-(content|pattern)$")
 
@@ -80,6 +77,11 @@ def parse_frontmatter(text: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def strip_frontmatter(text: str) -> str:
+    m = _FRONTMATTER_RE.match(text)
+    return text[m.end():] if m else text
+
+
 _TITLE_SUFFIX_RE = re.compile(r"\s+(Pattern|Architecture Style)$", re.I)
 
 
@@ -88,6 +90,24 @@ def derive_display_name(concept_id: str, frontmatter: dict) -> str:
     if isinstance(title, str) and title.strip():
         return _TITLE_SUFFIX_RE.sub("", title.strip())
     return " ".join(word.capitalize() for word in concept_id.split("-"))
+
+
+_H1_RE = re.compile(r"^#[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+
+
+def derive_raw_title(preamble_text: str, frontmatter: dict) -> str | None:
+    """The title exactly as authored -- unstripped of a trailing "Pattern"/
+    "Architecture Style" suffix, unlike derive_display_name. Feeds the
+    concept_terms title-type term (specs/006-corpus-structure-rebuild
+    data-model.md): frontmatter `title` first, falling back to the
+    document's H1 (searched only within the preamble, not the whole file,
+    so a `# ` line inside a later code sample can never be mistaken for
+    the document title)."""
+    title = frontmatter.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    m = _H1_RE.search(preamble_text)
+    return m.group(1).strip() if m else None
 
 
 def parse_doc_date(frontmatter: dict) -> str | None:
@@ -100,135 +120,85 @@ def parse_doc_date(frontmatter: dict) -> str | None:
         return None
 
 
-# --- FR-006 / FR-006a / FR-007: section parsing -----------------------------
+# --- fenced code block protection -------------------------------------------
+#
+# Fences are masked BEFORE any boundary (heading, list item, paragraph) is
+# chosen, by finding fence ranges up front and rejecting any candidate match
+# whose start falls inside one. A section that cannot be split without
+# cutting a fence stays whole and exceeds the size cap -- spec.md's Edge
+# Cases explicitly permits this.
 
-_H2_RE = re.compile(r"^##(?!#)\s*(.+?)\s*$")
-_H3_RE = re.compile(r"^###(?!#)\s*(.+?)\s*$")
+_FENCE_MARK_RE = re.compile(r"^[ \t]*```.*$", re.MULTILINE)
+
+
+def _fence_ranges(text: str) -> list[tuple[int, int]]:
+    marks = list(_FENCE_MARK_RE.finditer(text))
+    ranges = []
+    i = 0
+    while i + 1 < len(marks):
+        ranges.append((marks[i].start(), marks[i + 1].end()))
+        i += 2
+    return ranges
+
+
+def _inside_any(pos: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start <= pos < end for start, end in ranges)
+
+
+# --- structure-first section parsing, with exact byte spans ----------------
+#
+# Every heading match's span is tracked directly against the post-frontmatter
+# text (no line-join-and-rejoin reconstruction, which would lose exact offset
+# fidelity). A section's body span runs from immediately after its heading
+# line's newline through the start of the next heading line (or EOF) --
+# nothing is trimmed, so consecutive spans plus the interleaved heading-line
+# bytes reconstruct the source exactly by construction (this is what SC-001's
+# "no gap, no overlap" is verified against in tests/test_chunk_azure.py).
+
+_HEADING_RE = re.compile(r"^(#{2,3})(?!#)[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 
 
 class Section:
-    __slots__ = ("level", "heading", "parent_h2", "lines")
+    __slots__ = ("level", "heading", "parent_h2", "match_start", "body_start", "body_end")
 
-    def __init__(self, level: int, heading: str, parent_h2: str | None):
+    def __init__(self, level, heading, parent_h2, match_start, body_start, body_end):
         self.level = level
         self.heading = heading
         self.parent_h2 = parent_h2
-        self.lines: list[str] = []
+        self.match_start = match_start
+        self.body_start = body_start
+        self.body_end = body_end
 
     @property
     def body(self) -> str:
-        return "\n".join(self.lines)
+        raise NotImplementedError("slice the owning text with body_start/body_end instead")
 
 
 def parse_sections(text: str) -> list[Section]:
+    fence_ranges = _fence_ranges(text)
+    matches = [m for m in _HEADING_RE.finditer(text) if not _inside_any(m.start(), fence_ranges)]
+
     sections: list[Section] = []
-    in_fence = False
-    current: Section | None = None
     parent_h2: str | None = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            if current is not None:
-                current.lines.append(line)
-            continue
-        if not in_fence:
-            m2 = _H2_RE.match(line)
-            m3 = _H3_RE.match(line) if not m2 else None
-            if m2:
-                current = Section(2, m2.group(1), None)
-                sections.append(current)
-                parent_h2 = m2.group(1)
-                continue
-            if m3:
-                current = Section(3, m3.group(1), parent_h2)
-                sections.append(current)
-                continue
-        if current is not None:
-            current.lines.append(line)
+    for i, m in enumerate(matches):
+        level = len(m.group(1))
+        heading = m.group(2)
+        body_start = m.end()
+        if body_start < len(text) and text[body_start] == "\n":
+            body_start += 1
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+
+        if level == 2:
+            parent_h2 = heading
+            this_parent = None
+        else:
+            this_parent = parent_h2
+
+        sections.append(Section(level, heading, this_parent, m.start(), body_start, body_end))
     return sections
 
 
-# --- FR-008 / FR-008a: kind classification ----------------------------------
-
-_KIND_PATTERNS = [
-    ("cost", re.compile(r"^(Problems|Issues|Considerations|Challenges|Limitations)", re.I)),
-    # "Pattern advantages" is matched explicitly (prefix-anchored, like every
-    # other rule here) rather than a general \bAdvantages\b contains-match.
-    # The corpus has exactly two headings containing that word: "Pattern
-    # advantages" (genuinely a benefit section) and "Advantages and
-    # considerations for each strategy" (a MIXED section — its body contains
-    # real cost/consideration content alongside advantages). A broad match
-    # would classify the whole mixed section as `benefit`, which is exactly
-    # the DESIGN.md §9④ failure mode: a drawback gets cited as an advantage,
-    # with a genuine verbatim excerpt behind it, so the substring check still
-    # passes. The narrower match leaves "Advantages and considerations for
-    # each strategy" unmapped, surfacing it in the report for a human call
-    # instead of silently mislabeling half its content.
-    ("benefit", re.compile(r"^(Benefits|Pattern advantages)", re.I)),
-    ("when", re.compile(r"^When to use", re.I)),
-    ("example", re.compile(r"^(Example|Next step)", re.I)),
-    ("meta", re.compile(r"^(Workload design|Related resources|Contributors)", re.I)),
-]
-
-TRADEOFF_KINDS = {"cost", "benefit", "when"}
-
-
-def classify_kind(heading: str, parent_h2: str | None) -> str | None:
-    governing_h2 = parent_h2 if parent_h2 is not None else heading
-    guarded = governing_h2.strip().lower().startswith("context and problem")
-    for kind, pattern in _KIND_PATTERNS:
-        if pattern.match(heading.strip()):
-            if guarded and kind in TRADEOFF_KINDS:
-                continue
-            return kind
-    return None
-
-
-def is_discarded_section(heading: str) -> bool:
-    return heading.strip().lower().startswith("workload design")
-
-
-# --- FR-011: directive-line stripping ---------------------------------------
-#
-# A directive line can sit in the MIDDLE of otherwise-kept prose (e.g. an
-# :::image::: directive between two sentences of an "Example" section).
-# Simply excising that line and rejoining the rest would produce text that is
-# no longer a literal, contiguous substring of the source file — violating
-# SC-001. split_around_directives() returns each contiguous, directive-free
-# run as its own piece instead, so callers can emit one chunk per piece
-# rather than one chunk splicing multiple non-adjacent runs together.
-
-_DIRECTIVE_LINE_RE = re.compile(r"^[ \t]*:::.*$", re.MULTILINE)
-
-
-def split_around_directives(text: str) -> list[str]:
-    spans = [m.span() for m in _DIRECTIVE_LINE_RE.finditer(text)]
-    if not spans:
-        return [text] if text.strip() else []
-    parts: list[str] = []
-    pos = 0
-    for start, end in spans:
-        segment = text[pos:start]
-        if segment.strip():
-            parts.append(segment)
-        pos = end
-    tail = text[pos:]
-    if tail.strip():
-        parts.append(tail)
-    return parts
-
-
-def strip_directives(body: str) -> str:
-    """Thin single-string convenience wrapper (used directly by a few tests
-    and for the simple, no-mid-content-removal case). The real chunking
-    pipeline uses split_around_directives() so a directive in the middle of a
-    section can never merge two non-adjacent runs into one non-substring
-    chunk."""
-    return "\n".join(split_around_directives(body))
-
-
-# --- FR-012: link extraction (read-only scan, never mutates content) -------
+# --- FR-012-equivalent: link extraction (read-only scan, never mutates content)
 
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
@@ -251,101 +221,87 @@ def normalize_related_targets(targets: set[str]) -> list[str]:
     return sorted(ids)
 
 
-# --- FR-009: item-level bullet splitting ------------------------------------
-#
-# Offset-based (not line-split-and-rejoin): every Item.body and every
-# remainder piece is a direct slice of the original section body, which
-# guarantees it's a literal substring by construction — no reconstruction
-# step that could silently break contiguity (the same class of bug as
-# directive stripping, above). A top-level bullet's span runs from its own
-# "- " through the character right before the next top-level bullet (or the
-# end of the section), so any indented sub-content/sub-bullets under it are
-# naturally included in its body.
+# --- size-bounded splitting (FR-006, FR-007) --------------------------------
 
-_TOP_BULLET_RE = re.compile(r"^-\s+(.*)$", re.MULTILINE)
+BODY_CAP = 3000
+CHILD_FLOOR = 300
 
-_ITEM_LABEL_PATTERNS = [
-    re.compile(r"^\*\*(.+?)\.\*\*\s*(.*)$"),  # - **Label.** body
-    re.compile(r"^\*\*(.+?):\*\*\s*(.*)$"),  # - **Label:** body
-    re.compile(r"^\*\*(.+?)\*\*\.\s*(.*)$"),  # - **Label**. body
-    re.compile(r"^\*\*(.+?)\*\*:\s*(.*)$"),  # - **Label**: body
-    re.compile(r"^\*\*(.+?)\*\*\s+(.*)$"),  # - **Label** body (loosest, tried last)
-]
+_TOP_BULLET_RE = re.compile(r"^-\s+", re.MULTILINE)
+_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n+")
 
 
-class Item:
-    __slots__ = ("label", "body")
+def _boundary_positions(body: str, fence_ranges: list[tuple[int, int]]) -> list[int]:
+    item_starts = sorted(
+        {m.start() for m in _TOP_BULLET_RE.finditer(body) if not _inside_any(m.start(), fence_ranges)}
+    )
+    if item_starts:
+        return sorted({0, *item_starts})
 
-    def __init__(self, label: str, body: str):
-        self.label = label
-        self.body = body
+    paragraph_starts = sorted(
+        {
+            m.end()
+            for m in _BLANK_LINE_RE.finditer(body)
+            if m.end() < len(body) and not _inside_any(m.start(), fence_ranges)
+        }
+    )
+    return sorted({0, *paragraph_starts})
 
 
-def split_items(body: str) -> tuple[list[Item], list[str]]:
-    """Returns (items, remainder_pieces). remainder_pieces is a list, not a
-    single joined string, because non-matching bullets can occur in more
-    than one *non-adjacent* run once matched items are excised from between
-    them — joining non-adjacent runs together would not be a valid substring
-    of the source (spec FR-009 acceptance scenario 5).
+def _pack_boundaries(boundaries: list[int], total_len: int) -> list[tuple[int, int]]:
+    raw_spans = []
+    for i, start in enumerate(boundaries):
+        end = boundaries[i + 1] if i + 1 < len(boundaries) else total_len
+        raw_spans.append((start, end))
 
-    But adjacent non-matching bullets are NOT non-adjacent: a top-level
-    bullet's span already extends all the way to the start of the next
-    top-level bullet (`span_end`), so there is no gap between consecutive
-    bullets to begin with. A run of consecutive non-matching bullets (plus
-    any leading prose before the first bullet) is therefore always
-    contiguous in the source and MUST be emitted as a single piece — only a
-    genuinely matched item, sitting between two such runs, is what actually
-    starts a new, non-adjacent piece. Treating every non-matching bullet as
-    its own piece (an earlier version of this function) over-fragmented
-    sections with no bold labels at all — e.g. throttling.md's "Problems and
-    considerations" (pure prose bullets, zero labelled items) split into 17
-    chunks instead of remaining the single chunk FR-009 requires."""
-    matches = list(_TOP_BULLET_RE.finditer(body))
-    if not matches:
-        return [], ([body] if body.strip() else [])
+    packed: list[tuple[int, int]] = []
+    cur_start, cur_end = raw_spans[0]
+    for start, end in raw_spans[1:]:
+        if (end - cur_start) <= BODY_CAP:
+            cur_end = end
+        else:
+            packed.append((cur_start, cur_end))
+            cur_start, cur_end = start, end
+    packed.append((cur_start, cur_end))
+    return packed
 
-    items: list[Item] = []
-    remainder: list[str] = []
-    remainder_start: int | None = 0  # covers any leading prose before the first bullet
-    prev_end = 0
 
-    for i, m in enumerate(matches):
-        span_end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
-        first_line = m.group(1)
-
-        matched = None
-        for pattern in _ITEM_LABEL_PATTERNS:
-            im = pattern.match(first_line)
-            if im:
-                matched = (im.group(1).strip(), im.start(2))
+def _merge_floor_violations(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    result = list(spans)
+    changed = True
+    while changed and len(result) > 1:
+        changed = False
+        for i, (s, e) in enumerate(result):
+            if (e - s) < CHILD_FLOOR:
+                if i + 1 < len(result):
+                    _, ne = result[i + 1]
+                    result[i:i + 2] = [(s, ne)]
+                else:
+                    ps, _ = result[i - 1]
+                    result[i - 1:i + 1] = [(ps, e)]
+                changed = True
                 break
-
-        if matched is None:
-            if remainder_start is None:
-                remainder_start = m.start()
-            prev_end = span_end
-            continue
-
-        if remainder_start is not None:
-            piece = body[remainder_start:m.start()]
-            if piece.strip():
-                remainder.append(piece)
-            remainder_start = None
-
-        label, offset_in_line = matched
-        item_body_start = m.start(1) + offset_in_line
-        items.append(Item(label, body[item_body_start:span_end]))
-        prev_end = span_end
-
-    if remainder_start is not None:
-        piece = body[remainder_start:prev_end]
-        if piece.strip():
-            remainder.append(piece)
-
-    return items, remainder
+    return result
 
 
-# --- chunk_id: label-derived slug, not positional (FR-005) -----------------
+def split_section_body(body: str) -> list[tuple[int, int]]:
+    """Returns a list of (start, end) offsets relative to `body`, partitioning
+    [0, len(body)) exactly. A body within the cap is returned unsplit. Splits
+    prefer list-item boundaries, falling back to paragraph boundaries; fenced
+    code blocks are never cut. No returned part is below CHILD_FLOOR unless
+    the whole body already is."""
+    if len(body) <= BODY_CAP:
+        return [(0, len(body))]
+
+    fence_ranges = _fence_ranges(body)
+    boundaries = _boundary_positions(body, fence_ranges)
+    if len(boundaries) <= 1:
+        return [(0, len(body))]  # no usable boundary outside a fence: stays whole, exceeds cap
+
+    packed = _pack_boundaries(boundaries, len(body))
+    return _merge_floor_violations(packed)
+
+
+# --- identifiers -------------------------------------------------------------
 
 
 def slugify(text: str) -> str:
@@ -354,36 +310,35 @@ def slugify(text: str) -> str:
     return slug.strip("-")
 
 
-def build_chunk_id(concept_id: str, kind: str, slug: str) -> str:
-    return f"{SOURCE_ID}:{concept_id}:{kind}:{slug}"
+def build_heading_path_slug(heading_path: list[str]) -> str:
+    segments = heading_path[1:]  # exclude the document title
+    if not segments:
+        return "preamble"
+    return "--".join(slugify(seg)[:40] for seg in segments)
 
 
-def finalize_chunk_ids(pending: list[dict]) -> list[dict]:
-    """Assigns final chunkId values from the COMPLETE set of pending chunks
-    for a file, not incrementally as each is produced. An earlier,
-    incremental version gave the bare id to whichever colliding chunk was
-    emitted first and a hash suffix to the rest — which made the bare id
-    positional in disguise: it belonged to whatever was traversed first, not
-    to any particular content. If an upstream edit later split that same
-    section differently (e.g. a directive line landing in the middle of what
-    used to be the first piece), the bare id could end up pointing at
-    different content than it originally held — exactly what FR-005 and
-    spec acceptance scenario 11 forbid, just relocated from "index in
-    document order" to "order of traversal."
+def build_section_chunk_id(concept_id: str, heading_path: list[str]) -> str:
+    return f"{SOURCE_ID}:{concept_id}:{build_heading_path_slug(heading_path)}"
 
-    Here, every chunk carries a `baseChunkId`; slugs that occur more than
-    once within the file get a content-hash suffix on EVERY occurrence
-    (including the one that would have been "first"), so the bare id is
-    only ever used when it's genuinely unique. A chunk whose content changes
-    always gets a new id; a chunk whose content is unchanged always keeps
-    the id it already had, regardless of what else in the file changed
-    around it."""
+
+def build_child_chunk_id(parent_chunk_id: str, content: str) -> str:
+    sha8 = hashlib.sha256(content.encode("utf-8")).hexdigest()[:8]
+    return f"{parent_chunk_id}:{sha8}"
+
+
+def finalize_section_ids(pending: list[dict]) -> list[dict]:
+    """Disambiguates section-level ids that collide on the same heading-path
+    slug (spec.md Edge Cases: "identifiers must remain distinct"). Every
+    occurrence of a colliding base id gets a content-hash suffix -- including
+    the one that would otherwise keep the bare id -- so the bare id is only
+    ever used when it is genuinely unique, and never depends on traversal
+    order (docs/DECISIONS.md's chunk_id entry)."""
     counts: dict[str, int] = {}
     for c in pending:
         counts[c["baseChunkId"]] = counts.get(c["baseChunkId"], 0) + 1
 
     finalized: list[dict] = []
-    seen_final_ids: set[str] = set()
+    seen: set[str] = set()
     for c in pending:
         base_id = c["baseChunkId"]
         if counts[base_id] > 1:
@@ -391,27 +346,16 @@ def finalize_chunk_ids(pending: list[dict]) -> list[dict]:
             chunk_id = f"{base_id}-{suffix}"
         else:
             chunk_id = base_id
-        # Defensive tiebreaker for the (extremely unlikely) case of two
-        # colliding chunks with byte-identical content, which would hash to
-        # the same suffix: append a counter rather than silently overwrite.
-        if chunk_id in seen_final_ids:
+        if chunk_id in seen:
             n = 2
-            while f"{chunk_id}-{n}" in seen_final_ids:
+            while f"{chunk_id}-{n}" in seen:
                 n += 1
             chunk_id = f"{chunk_id}-{n}"
-        seen_final_ids.add(chunk_id)
+        seen.add(chunk_id)
         out = {k: v for k, v in c.items() if k != "baseChunkId"}
         out["chunkId"] = chunk_id
         finalized.append(out)
     return finalized
-
-
-# --- FR-013 / FR-013a: contextual prefix ------------------------------------
-
-
-def build_context_prefix(display_name: str, ancestor_headings: list[str]) -> str:
-    parts = [f"{display_name} pattern"] + ancestor_headings
-    return "[" + " / ".join(parts) + "]"
 
 
 # --- per-file chunking -------------------------------------------------------
@@ -419,92 +363,116 @@ def build_context_prefix(display_name: str, ancestor_headings: list[str]) -> str
 
 def chunk_file(path: Path, concept_id: str, source_url: str = "", citable: bool = True,
                 content_hash: str = "", source_file: str = "") -> dict:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    frontmatter = parse_frontmatter(text)
+    raw_text = path.read_text(encoding="utf-8", errors="replace")
+    frontmatter = parse_frontmatter(raw_text)
     display_name = derive_display_name(concept_id, frontmatter)
     doc_date = parse_doc_date(frontmatter)
+    post_fm_text = strip_frontmatter(raw_text)
 
-    sections = parse_sections(text)
+    sections = parse_sections(post_fm_text)
 
-    pending_chunks: list[dict] = []
-    unmapped_headings: list[str] = []
     related_targets: set[str] = set()
 
+    # Every unit -- preamble plus every H2/H3 section -- is a "top-level"
+    # pending entry, in document order, none excluded (FR-001, FR-002).
+    top_level: list[dict] = []
+
+    first_start = sections[0].match_start if sections else len(post_fm_text)
+    raw_title = derive_raw_title(post_fm_text[0:first_start], frontmatter)
+    top_level.append({
+        "headingPath": [display_name],
+        "start": 0,
+        "end": first_start,
+    })
+    for link_text, target in extract_links(post_fm_text[0:first_start]):
+        related_targets.add(target)
+
     for section in sections:
-        heading = section.heading
-        for _link_text, target in extract_links(section.body):
+        if section.level == 2:
+            heading_path = [display_name, section.heading]
+        else:
+            heading_path = (
+                [display_name, section.parent_h2, section.heading]
+                if section.parent_h2 is not None
+                else [display_name, section.heading]
+            )
+        top_level.append({
+            "headingPath": heading_path,
+            "start": section.body_start,
+            "end": section.body_end,
+        })
+        for link_text, target in extract_links(post_fm_text[section.body_start:section.body_end]):
             related_targets.add(target)
 
-        kind = classify_kind(heading, section.parent_h2)
-        if kind is None:
-            unmapped_headings.append(heading)
+    # Drop true zero-length spans (a heading immediately followed by another
+    # heading, or a document whose very first line is already a heading) --
+    # they contribute nothing and would otherwise become an empty chunk.
+    top_level = [t for t in top_level if t["end"] > t["start"]]
+
+    pending_sections: list[dict] = []
+    for t in top_level:
+        content = post_fm_text[t["start"]:t["end"]]
+        pending_sections.append({
+            "baseChunkId": build_section_chunk_id(concept_id, t["headingPath"]),
+            "patternId": concept_id,
+            "headingPath": t["headingPath"],
+            "parentChunkId": None,
+            "sourceOffset": t["start"],
+            "sourceLength": t["end"] - t["start"],
+            "content": content,
+            "sourceUrl": source_url,
+            "citable": citable,
+            "docDate": doc_date,
+            "contentHash": content_hash,
+            "sourceFile": source_file,
+        })
+
+    finalized_sections = finalize_section_ids(pending_sections)
+
+    all_chunks: list[dict] = []
+    for section_chunk in finalized_sections:
+        all_chunks.append(section_chunk)
+        content = section_chunk["content"]
+        if len(content) <= BODY_CAP:
             continue
-        if kind == "meta" and is_discarded_section(heading):
-            continue
 
-        ancestor = [section.parent_h2, heading] if section.level == 3 else [heading]
-        prefix = build_context_prefix(display_name, ancestor)
+        parent_id = section_chunk["chunkId"]
+        child_spans = split_section_body(content)
+        if len(child_spans) <= 1:
+            continue  # unsplittable (fence-protected or no boundary) -- stays as the single section chunk
 
-        def _emit(label: str, raw_body: str):
-            # One chunk per contiguous, directive-free segment — never one
-            # chunk splicing multiple non-adjacent segments together (would
-            # violate SC-001's substring guarantee; see split_around_directives).
-            for segment in split_around_directives(raw_body):
-                content = segment.strip()
-                if not content:
-                    continue
-                slug = slugify(label)
-                pending_chunks.append(
-                    {
-                        "baseChunkId": build_chunk_id(concept_id, kind, slug),
-                        "patternId": concept_id,
-                        "kind": kind,
-                        "label": label,
-                        "content": content,
-                        "contextPrefix": prefix,
-                        "sourceUrl": source_url,
-                        "citable": citable,
-                        "kindConfidence": "regex",
-                        "docDate": doc_date,
-                        "contentHash": content_hash,
-                        "sourceFile": source_file,
-                    }
-                )
-
-        if kind in TRADEOFF_KINDS:
-            items, remainder_pieces = split_items(section.body)
-            for item in items:
-                _emit(item.label, item.body)
-            for piece in remainder_pieces:
-                _emit(heading, piece)
-        else:
-            _emit(heading, section.body)
+        seen_child_ids: set[str] = set()
+        for rel_start, rel_end in child_spans:
+            child_content = content[rel_start:rel_end]
+            child_id = build_child_chunk_id(parent_id, child_content)
+            if child_id in seen_child_ids:
+                n = 2
+                while f"{child_id}-{n}" in seen_child_ids:
+                    n += 1
+                child_id = f"{child_id}-{n}"
+            seen_child_ids.add(child_id)
+            all_chunks.append({
+                "chunkId": child_id,
+                "patternId": concept_id,
+                "headingPath": section_chunk["headingPath"],
+                "parentChunkId": parent_id,
+                "sourceOffset": section_chunk["sourceOffset"] + rel_start,
+                "sourceLength": rel_end - rel_start,
+                "content": child_content,
+                "sourceUrl": source_url,
+                "citable": citable,
+                "docDate": doc_date,
+                "contentHash": content_hash,
+                "sourceFile": source_file,
+            })
 
     return {
-        "chunks": finalize_chunk_ids(pending_chunks),
-        "unmapped_headings": unmapped_headings,
+        "chunks": all_chunks,
         "related_targets": related_targets,
         "display_name": display_name,
+        "raw_title": raw_title,
         "doc_date": doc_date,
     }
-
-
-# --- FR-020 / FR-021 / FR-022: unmapped-headings report ---------------------
-
-
-def build_unmapped_report(counts: dict[str, int]) -> str:
-    lines = ["# Unmapped headings — azure corpus", ""]
-    if not counts:
-        lines.append("No unmapped headings — every H2/H3 heading matched a `kind` "
-                      "regex or was recognized-and-discarded by rule.")
-        return "\n".join(lines) + "\n"
-    lines.append(f"{len(counts)} distinct unmapped headings, {sum(counts.values())} total occurrences.")
-    lines.append("")
-    lines.append("| heading | occurrences |")
-    lines.append("|---|---:|")
-    for heading, count in sorted(counts.items(), key=lambda kv: -kv[1]):
-        lines.append(f"| {heading} | {count} |")
-    return "\n".join(lines) + "\n"
 
 
 # --- driver -------------------------------------------------------------------
@@ -530,12 +498,13 @@ def main():
 
     all_chunks: list[dict] = []
     all_candidates: list[dict] = []
-    unmapped_counts: dict[str, int] = {}
-    kind_totals: dict[str, int] = {}
+    section_count = 0
+    leaf_count = 0
+    total_leaf_bytes = 0
 
     for rel in eligible_rel_paths:
         entry = manifest[rel]
-        path = CORPUS / entry["local_path"]
+        path = resolve_local_path(entry["local_path"])
         concept_id = derive_concept_id(Path(rel).stem)
         result = chunk_file(
             path,
@@ -546,15 +515,19 @@ def main():
             source_file=rel,
         )
         all_chunks.extend(result["chunks"])
-        for h in result["unmapped_headings"]:
-            unmapped_counts[h] = unmapped_counts.get(h, 0) + 1
+
+        parent_ids = {c["parentChunkId"] for c in result["chunks"] if c["parentChunkId"]}
         for c in result["chunks"]:
-            kind_totals[c["kind"]] = kind_totals.get(c["kind"], 0) + 1
+            if c["chunkId"] not in parent_ids:
+                leaf_count += 1
+                total_leaf_bytes += c["sourceLength"]
+        section_count += sum(1 for c in result["chunks"] if c["parentChunkId"] is None)
 
         all_candidates.append(
             {
                 "conceptId": concept_id,
                 "name": result["display_name"],
+                "title": result["raw_title"],
                 "kind": "architecture",
                 "aliases": [],
                 "related": normalize_related_targets(result["related_targets"]),
@@ -567,19 +540,14 @@ def main():
     with open(CHUNKS_OUT, "w", encoding="utf-8") as f:
         for chunk in all_chunks:
             f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
-    print(f"[chunk_azure] wrote {len(all_chunks)} chunks -> {CHUNKS_OUT}")
-    for kind, count in sorted(kind_totals.items()):
-        print(f"  {kind}: {count}")
+    print(f"[chunk_azure] wrote {len(all_chunks)} chunk rows ({section_count} sections, {leaf_count} leaves) -> {CHUNKS_OUT}")
+    print(f"[chunk_azure] leaf byte coverage: {total_leaf_bytes} bytes claimed")
 
     CANDIDATES_OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(CANDIDATES_OUT, "w", encoding="utf-8") as f:
         for candidate in all_candidates:
             f.write(json.dumps(candidate, ensure_ascii=False) + "\n")
     print(f"[chunk_azure] wrote {len(all_candidates)} concept candidates -> {CANDIDATES_OUT}")
-
-    REPORT_OUT.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_OUT.write_text(build_unmapped_report(unmapped_counts), encoding="utf-8")
-    print(f"[chunk_azure] wrote unmapped-headings report -> {REPORT_OUT}")
 
 
 if __name__ == "__main__":

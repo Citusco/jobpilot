@@ -1,9 +1,14 @@
-"""Fixture-based tests for chunk_azure.py, written directly from spec.md's
-FR-006 through FR-015/FR-019/FR-023 — NOT derived from any prior measurement
-script (see tasks.md's constraint banner and docs/DECISIONS.md's 2026-08-08
-measurement-first-discipline entry). No real corpus file or database needed;
-every fixture below is a small, self-contained markdown string.
+"""Tests for the rewritten chunk_azure.py (structure-first, size-bounded
+hierarchical chunking -- specs/006-corpus-structure-rebuild).
+
+Per tasks.md T003, the coverage/determinism/nesting assertions run against
+the REAL corpus (corpus/raw/azure/), not fixtures -- both defects this
+feature closes (the 69% kind-filter loss and the invisible preamble) survived
+a passing fixture-only suite. Fixture-based tests below cover the smaller
+mechanics (splitting, slugs, ids) where a hand-built input is clearer than
+hunting for a real example.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -11,15 +16,105 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import chunk_azure as ca  # noqa: E402
 
+_H23_RE = re.compile(r"^#{2,3}[ \t]+\S.*$", re.MULTILINE)
+
+
+def _independent_heading_bytes(post_fm_text: str) -> int:
+    """Counts H2/H3 heading-line bytes with a scan written here rather than
+    borrowed from chunk_azure. Fences are masked by a second implementation on
+    purpose: the check is that two independent readings of the source agree,
+    which they cannot demonstrate if one calls the other."""
+    masked, inside = [], False
+    for line in post_fm_text.split(chr(10)):
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            masked.append("")
+            continue
+        masked.append("" if inside else line)
+    # +1 per heading for the newline the section body starts after
+    return sum(len(m.group(0)) + 1 for m in _H23_RE.finditer(chr(10).join(masked)))
+
+_MISSING_CORPUS_MESSAGE = (
+    "real-corpus assertions cannot run: corpus/raw/azure/ or its manifest is missing."
+    "\n"
+    "Restore it with:  python corpus/tools/fetch_git.py --only azure"
+    "\n"
+    "These tests must not be skipped -- see the docstring above."
+)
+
+def _load_manifest_entries() -> dict:
+    import json
+
+    entries = {}
+    with open(ca.MANIFEST_PATH, encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                row = json.loads(line)
+                entries[row["local_path"]] = row
+    return entries
+
+
+def _require_real_corpus() -> None:
+    """Fails rather than skips when the real corpus is unusable.
+
+    These assertions are the reason this feature exists -- the 69% kind-filter
+    loss and the never-ingested preamble both survived a green fixture-only
+    suite. A skip would let exactly that state recur: the suite reports success
+    while the checks that matter quietly do not run.
+
+    Two distinct causes are separated, because the remedies differ. The corpus
+    may simply be absent, or it may be present but no longer match the manifest
+    it was recorded against -- upstream is fetched unpinned (see the 2026-08-11
+    correction in docs/DECISIONS.md), so re-fetching can legitimately return
+    different bytes than the manifest describes.
+    """
+    import pytest
+
+    if not ca.MANIFEST_PATH.exists() or not ca.RAW_AZURE.exists():
+        pytest.fail(
+            "real-corpus assertions cannot run: corpus/raw/azure/ or its manifest is absent."
+            + chr(10)
+            + "  python corpus/tools/fetch_git.py --only azure"
+            + chr(10)
+            + "  python corpus/tools/filter_md.py"
+            + chr(10)
+            + "These tests must not be skipped -- see the docstring above.",
+            pytrace=False,
+        )
+
+    missing = [
+        rel
+        for rel, entry in _load_manifest_entries().items()
+        if not ca.resolve_local_path(entry["local_path"]).exists()
+    ]
+    if missing:
+        pytest.fail(
+            "the corpus on disk does not match its manifest: "
+            + str(len(missing))
+            + " recorded file(s) are absent, e.g. "
+            + missing[0]
+            + "."
+            + chr(10)
+            + "Upstream is fetched unpinned, so a re-fetch can drop or change files the "
+            + "manifest still lists."
+            + chr(10)
+            + "Rebuild the manifest to match what is on disk:"
+            + chr(10)
+            + "  python corpus/tools/filter_md.py && python corpus/tools/build_manifest_git.py",
+            pytrace=False,
+        )
+
 
 # ---------------------------------------------------------------------------
-# FR-006 / FR-006a / FR-007: H2+H3 splitting, code-fence protection
+# Section parsing: H2/H3 splitting, code-fence protection, preamble
 # ---------------------------------------------------------------------------
 
 CQRS_FIXTURE = """---
 title: CQRS Pattern
 ms.date: 02/20/2025
 ---
+Segregate the read and write operations for a data store into separate data
+models.
 
 ## Solution
 
@@ -53,19 +148,22 @@ Cross-references to the Azure Well-Architected Framework.
 """
 
 
-def test_h2_keeps_only_intro_before_first_h3():
-    sections = ca.parse_sections(CQRS_FIXTURE)
+def test_h2_body_stops_before_its_first_h3():
+    post_fm = ca.strip_frontmatter(CQRS_FIXTURE)
+    sections = ca.parse_sections(post_fm)
     solution = next(s for s in sections if s.level == 2 and s.heading == "Solution")
-    assert "Intro text before any H3." in solution.body
-    assert "Separate read models" not in solution.body
-    assert "Benefits of CQRS" not in solution.body
+    body = post_fm[solution.body_start:solution.body_end]
+    assert "Intro text before any H3." in body
+    assert "Separate read models" not in body
+    assert "Benefits of CQRS" not in body
 
 
-def test_h3_headings_become_their_own_sections():
-    sections = ca.parse_sections(CQRS_FIXTURE)
-    headings = [(s.level, s.heading) for s in sections]
-    assert (3, "Separate read models and write models") in headings
-    assert (3, "Benefits of CQRS") in headings
+def test_h3_headings_become_their_own_sections_with_parent_h2():
+    post_fm = ca.strip_frontmatter(CQRS_FIXTURE)
+    sections = ca.parse_sections(post_fm)
+    h3s = {(s.heading, s.parent_h2) for s in sections if s.level == 3}
+    assert ("Separate read models and write models", "Solution") in h3s
+    assert ("Benefits of CQRS", "Solution") in h3s
 
 
 def test_code_fence_protects_heading_like_lines_from_splitting():
@@ -82,417 +180,366 @@ More text after the fence.
 """
     sections = ca.parse_sections(text)
     assert len(sections) == 1
-    assert "## this looks like a heading" in sections[0].body
-    assert "More text after the fence." in sections[0].body
+    body = text[sections[0].body_start:sections[0].body_end]
+    assert "## this looks like a heading" in body
+    assert "More text after the fence." in body
+
+
+def test_preamble_before_first_heading_is_its_own_unit():
+    result = None
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "cqrs.md"
+        p.write_text(CQRS_FIXTURE, encoding="utf-8")
+        result = ca.chunk_file(p, "cqrs")
+    preamble = next(c for c in result["chunks"] if c["headingPath"] == ["CQRS"])
+    assert "Segregate the read and write operations" in preamble["content"]
+    assert preamble["parentChunkId"] is None
+
+
+def test_document_with_no_headings_is_a_single_preamble_chunk(tmp_path):
+    text = "Just prose, no headings anywhere in this file at all.\n"
+    p = tmp_path / "flat.md"
+    p.write_text(text, encoding="utf-8")
+    result = ca.chunk_file(p, "flat")
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["headingPath"] == ["Flat"]
+    assert result["chunks"][0]["content"] == text
 
 
 # ---------------------------------------------------------------------------
-# FR-008 / FR-008a: kind classification, Advantages, Context-and-problem guard
+# Nothing is classified or discarded any more
 # ---------------------------------------------------------------------------
 
-def test_classify_kind_maps_all_configured_prefixes_case_insensitively():
-    assert ca.classify_kind("Problems and considerations", None) == "cost"
-    assert ca.classify_kind("issues to note", None) == "cost"
-    assert ca.classify_kind("Considerations", None) == "cost"
-    assert ca.classify_kind("Challenges", None) == "cost"
-    assert ca.classify_kind("Limitations", None) == "cost"
-    assert ca.classify_kind("Benefits of CQRS", None) == "benefit"
-    assert ca.classify_kind("benefits", None) == "benefit"
-    assert ca.classify_kind("When to use this pattern", None) == "when"
-    assert ca.classify_kind("Example", None) == "example"
-    assert ca.classify_kind("Next step", None) == "example"
-    assert ca.classify_kind("Workload design", None) == "meta"
-    assert ca.classify_kind("Related resources", None) == "meta"
-    assert ca.classify_kind("Contributors", None) == "meta"
-    assert ca.classify_kind("Something else entirely", None) is None
-
-
-def test_classify_kind_recognizes_pattern_advantages_as_benefit():
-    # FR-008: deviation from DESIGN.md's literal regex, added because the real
-    # corpus has "Pattern advantages" — genuinely a benefit-only section.
-    assert ca.classify_kind("Pattern advantages", None) == "benefit"
-
-
-def test_classify_kind_does_not_broadly_match_advantages_in_a_mixed_heading():
-    # "Advantages and considerations for each strategy" is a MIXED section —
-    # its body contains real cost/consideration content alongside advantages
-    # (sharding.md, real corpus). A broad `\bAdvantages\b` match would label
-    # the whole section `benefit`, which is exactly the DESIGN.md §9④ failure
-    # mode: a drawback gets cited as an advantage, with a genuine verbatim
-    # excerpt behind it, so the substring check still passes. This must fall
-    # to unmapped instead, surfacing it in the report for a human call.
-    assert ca.classify_kind("Advantages and considerations for each strategy", None) is None
-
-
-def test_context_and_problem_parent_guard_suppresses_tradeoff_kind():
-    # FR-008a, motivated by saga-content.md's real H3 "Challenges in
-    # microservices architectures" nested under "## Context and problem".
-    assert ca.classify_kind("Challenges in microservices architectures", "Context and problem") is None
-    # A heading that would match `example`/`meta` under the same parent is unaffected —
-    # the guard is scoped to cost/benefit/when only.
-    assert ca.classify_kind("Related resources", "Context and problem") == "meta"
-    # Not guarded when nested under a different H2.
-    assert ca.classify_kind("Challenges in microservices architectures", "Solution") == "cost"
-    # Not guarded when the heading is itself the "Context and problem" H2 (no parent).
-    assert ca.classify_kind("Context and problem", None) is None
-
-
-# ---------------------------------------------------------------------------
-# FR-009: item-level bullet splitting, all five label forms
-# ---------------------------------------------------------------------------
-
-def test_item_level_split_covers_all_five_bold_label_forms():
-    body = (
-        "- **Independent scaling.** Read and write workloads can scale independently.\n"
-        "- **Optimized data schemas:** the read side can use a different schema.\n"
-        "- **Complexity**. The basic idea is simple but can grow complex.\n"
-        "- **Messaging**: requests must be routed correctly.\n"
-        "- **Team ownership** clear ownership boundaries emerge.\n"
-    )
-    items, remainder_pieces = ca.split_items(body)
-    labels = [item.label for item in items]
-    assert labels == [
-        "Independent scaling",
-        "Optimized data schemas",
-        "Complexity",
-        "Messaging",
-        "Team ownership",
-    ]
-    # item.body is a direct slice of the source (through the start of the next
-    # top-level bullet), so it may carry a trailing newline — .strip() it for
-    # the content comparison, same as the real pipeline's _emit() does.
-    assert items[0].body.strip() == "Read and write workloads can scale independently."
-    assert items[0].body in body  # substring by construction
-    assert remainder_pieces == []
-
-
-def test_item_level_split_leaves_non_matching_bullets_in_remainder():
-    body = (
-        "- **Complexity.** The basic idea is simple but can grow complex.\n"
-        "- Just a plain bullet with no bold label at all.\n"
-    )
-    items, remainder_pieces = ca.split_items(body)
-    assert len(items) == 1
-    assert items[0].label == "Complexity"
-    assert any("Just a plain bullet with no bold label at all." in piece for piece in remainder_pieces)
-    for piece in remainder_pieces:
-        assert piece in body  # every remainder piece is a substring of the source
-
-
-# ---------------------------------------------------------------------------
-# FR-010: Workload design discard (recognized, not unmapped, no chunk)
-# ---------------------------------------------------------------------------
-
-def test_workload_design_is_discarded_but_recognized():
-    assert ca.classify_kind("Workload design", None) == "meta"
-    assert ca.is_discarded_section("Workload design") is True
-    assert ca.is_discarded_section("Related resources") is False
-
-
-# ---------------------------------------------------------------------------
-# FR-011: directive-line stripping
-# ---------------------------------------------------------------------------
-
-def test_directive_lines_are_stripped():
-    body = 'Some text.\n:::image type="content" source="./_images/x.png":::\nMore text.\n'
-    result = ca.strip_directives(body)
-    assert ":::" not in result
-    assert "Some text." in result
-    assert "More text." in result
-
-
-# ---------------------------------------------------------------------------
-# FR-012: verbatim link retention + separate extraction (not a content edit)
-# ---------------------------------------------------------------------------
-
-def test_links_are_never_stripped_from_content():
-    body = "See [Event Sourcing pattern](./event-sourcing.md) for a common complement."
-    # strip_directives is the only content transformation permitted (FR-014) —
-    # it must leave link markup fully intact.
-    assert ca.strip_directives(body) == body
-
-
-def test_extract_links_captures_text_and_target_without_mutating_input():
-    body = "See [Event Sourcing pattern](./event-sourcing.md) and [Saga](./saga-content.md)."
-    links = ca.extract_links(body)
-    assert links == [
-        ("Event Sourcing pattern", "./event-sourcing.md"),
-        ("Saga", "./saga-content.md"),
-    ]
-
-
-# ---------------------------------------------------------------------------
-# FR-013 / FR-013a: context prefix, full ancestor chain for H3
-# ---------------------------------------------------------------------------
-
-def test_context_prefix_h2_format():
-    prefix = ca.build_context_prefix("CQRS", ["Problems and considerations"])
-    assert prefix == "[CQRS pattern / Problems and considerations]"
-
-
-def test_context_prefix_h3_includes_full_ancestor_chain():
-    prefix = ca.build_context_prefix(
-        "CQRS",
-        ["Combine the Event Sourcing and CQRS patterns", "Benefits of combining the Event Sourcing and CQRS patterns"],
-    )
-    assert prefix == (
-        "[CQRS pattern / Combine the Event Sourcing and CQRS patterns / "
-        "Benefits of combining the Event Sourcing and CQRS patterns]"
-    )
-
-
-# ---------------------------------------------------------------------------
-# FR-014: no-rewrite guarantee (spot-checked at the module-function level)
-# ---------------------------------------------------------------------------
-
-def test_strip_directives_does_not_alter_surrounding_prose_characters():
-    body = "Line one stays exactly the same.\nLine two also stays exactly the same.\n"
-    assert ca.strip_directives(body) == body
-
-
-# ---------------------------------------------------------------------------
-# FR-015: frontmatter doc_date capture, null when absent
-# ---------------------------------------------------------------------------
-
-def test_doc_date_parsed_from_frontmatter():
-    frontmatter = ca.parse_frontmatter(CQRS_FIXTURE)
-    assert ca.parse_doc_date(frontmatter) == "2025-02-20"
-
-
-def test_doc_date_is_none_when_frontmatter_absent():
-    text = "## Context and problem\n\nNo frontmatter at all here.\n"
-    frontmatter = ca.parse_frontmatter(text)
-    assert frontmatter == {}
-    assert ca.parse_doc_date(frontmatter) is None
-
-
-# ---------------------------------------------------------------------------
-# FR-023: concept_id normalization (blocking correctness — DESIGN.md §12 #2)
-# ---------------------------------------------------------------------------
-
-def test_concept_id_strips_content_suffix():
-    assert ca.derive_concept_id("retry-content") == "retry"
-    assert ca.derive_concept_id("saga-content") == "saga"
-
-
-def test_concept_id_strips_pattern_suffix():
-    assert ca.derive_concept_id("rate-limiting-pattern") == "rate-limiting"
-
-
-def test_concept_id_unchanged_when_no_suffix():
-    assert ca.derive_concept_id("cqrs") == "cqrs"
-
-
-def test_display_name_from_frontmatter_title_strips_pattern_suffix():
-    frontmatter = {"title": "CQRS Pattern"}
-    assert ca.derive_display_name("cqrs", frontmatter) == "CQRS"
-
-
-def test_display_name_falls_back_to_humanized_concept_id_when_no_frontmatter():
-    # The -content/-pattern-suffixed files have no frontmatter at all
-    # (confirmed by inspection, data-model.md's conceptId row) — this is the
-    # fallback path those files actually take.
-    assert ca.derive_display_name("retry", {}) == "Retry"
-    assert ca.derive_display_name("materialized-view", {}) == "Materialized View"
-
-
-# ---------------------------------------------------------------------------
-# chunk_id: label-derived slug, not positional (FR-005, data-model.md)
-# ---------------------------------------------------------------------------
-
-def test_chunk_id_is_slug_based_not_positional():
-    chunk_id = ca.build_chunk_id("cqrs", "cost", ca.slugify("Eventual consistency"))
-    assert chunk_id == "azure:cqrs:cost:eventual-consistency"
-
-
-def test_chunk_id_stable_when_a_new_item_is_inserted_above_an_existing_one():
-    # spec.md acceptance scenario 11: inserting a new item above an existing
-    # one must not change the existing item's chunk_id.
-    body_before = "- **Eventual consistency.** The read side may lag behind.\n"
-    body_after = (
-        "- **New first item.** Something new.\n"
-        "- **Eventual consistency.** The read side may lag behind.\n"
-    )
-    items_before, _ = ca.split_items(body_before)
-    items_after, _ = ca.split_items(body_after)
-    id_before = ca.build_chunk_id("cqrs", "cost", ca.slugify(items_before[0].label))
-    id_after = ca.build_chunk_id("cqrs", "cost", ca.slugify(items_after[1].label))
-    assert id_before == id_after == "azure:cqrs:cost:eventual-consistency"
-
-
-def test_no_chunk_id_is_a_strict_prefix_of_another(tmp_path):
-    # FIX 2 invariant: the earlier incremental disambiguation gave the bare
-    # id to whichever colliding chunk was traversed first, which made that
-    # bare id positional in disguise — an upstream edit could later make it
-    # point at different content. Two sections in the same file that both
-    # produce a whole-section (no bold label) chunk will collide on the same
-    # base slug ("problems-and-considerations" in both) purely because they
-    # share a heading text and kind, not because either was traversed first.
+def test_every_heading_produces_a_chunk_regardless_of_wording(tmp_path):
     text = (
-        "## Solution\n\n"
-        "### First sub-pattern\n\n"
-        "## Problems and considerations\n\n"
-        "- Plain bullet one, no bold label.\n"
-        "- Plain bullet two, no bold label.\n\n"
-        "## When to use this pattern\n\n"
-        "### Problems and considerations\n\n"
-        "- A differently-worded plain bullet under an H3 with the same heading text.\n"
+        "## Some heading no rule would ever recognize\n\n"
+        "Content that used to be silently dropped.\n\n"
+        "## Workload design\n\n"
+        "Also kept now -- previously discarded even though 'recognized'.\n"
     )
-    fixture_path = tmp_path / "collision-fixture.md"
-    fixture_path.write_text(text, encoding="utf-8")
-    result = ca.chunk_file(fixture_path, "collision-fixture")
+    p = tmp_path / "everything-kept.md"
+    p.write_text(text, encoding="utf-8")
+    result = ca.chunk_file(p, "everything-kept")
+    contents = [c["content"] for c in result["chunks"]]
+    assert any("used to be silently dropped" in c for c in contents)
+    assert any("previously discarded" in c for c in contents)
 
-    ids = [c["chunkId"] for c in result["chunks"]]
-    for a in ids:
-        for b in ids:
-            if a != b:
-                assert not b.startswith(a + "-"), f"{a!r} is a strict prefix of {b!r}"
 
-    # Both collide on the same base slug, so BOTH must carry a suffix —
-    # neither gets to keep the bare id "merely" for being emitted first.
-    matching = [i for i in ids if i.startswith("azure:collision-fixture:cost:problems-and-considerations")]
-    assert len(matching) == 2
-    assert "azure:collision-fixture:cost:problems-and-considerations" not in matching
+def test_chunk_azure_module_has_no_classification_machinery():
+    # docs/DECISIONS.md 2026-08-10 "The kind subsystem is abolished": these
+    # names must not exist, not just be unused, so nothing can silently
+    # resurrect the filter this feature exists to remove.
+    for name in ("classify_kind", "is_discarded_section", "build_context_prefix", "_KIND_PATTERNS"):
+        assert not hasattr(ca, name), f"{name} should have been deleted, not just stopped being called"
 
 
 # ---------------------------------------------------------------------------
-# FIX 1: contiguous non-labelled bullets stay ONE chunk, never fragment
+# Size-bounded splitting (FR-006, FR-007)
 # ---------------------------------------------------------------------------
 
-def test_section_with_no_labelled_bullets_produces_exactly_one_chunk(tmp_path):
-    # Motivating real case: docs/patterns/throttling.md's "## Problems and
-    # considerations" has zero bold-labelled bullets — every bullet is plain
-    # prose. FR-009: bullets that don't match the label pattern "MUST remain
-    # part of their parent section's chunk." With nothing extracted, that's
-    # one chunk, not one chunk per bullet.
-    text = (
-        "## Problems and considerations\n\n"
-        "- Make throttling decisions early. Throttling is an architectural decision that affects the whole system.\n"
-        "- Make sure that throttled clients are informed. Return information so a client can determine how much to reduce its rate.\n"
-        "- Track resource use at a level of granularity that makes sense.\n"
+def test_body_under_cap_is_not_split():
+    body = "Short body.\n"
+    assert ca.split_section_body(body) == [(0, len(body))]
+
+
+def test_body_over_cap_splits_on_list_items_and_partitions_exactly():
+    items = "\n".join(f"- Item number {i} with some padding text to add length here.\n" for i in range(120))
+    assert len(items) > ca.BODY_CAP
+    spans = ca.split_section_body(items)
+    assert len(spans) > 1
+    # exact partition: contiguous, no gap, no overlap
+    assert spans[0][0] == 0
+    assert spans[-1][1] == len(items)
+    for (s1, e1), (s2, e2) in zip(spans, spans[1:]):
+        assert e1 == s2
+    reconstructed = "".join(items[s:e] for s, e in spans)
+    assert reconstructed == items
+
+
+def test_body_over_cap_falls_back_to_paragraphs_when_not_a_list():
+    paragraph = "This is one long sentence padded out. " * 20 + "\n"
+    body = (paragraph + "\n") * 15
+    assert len(body) > ca.BODY_CAP
+    spans = ca.split_section_body(body)
+    assert len(spans) > 1
+    reconstructed = "".join(body[s:e] for s, e in spans)
+    assert reconstructed == body
+
+
+def test_split_never_cuts_inside_a_fence():
+    fence = "```\n" + ("x" * 4000) + "\n```\n"
+    body = "Some intro.\n\n" + fence
+    assert len(body) > ca.BODY_CAP
+    spans = ca.split_section_body(body)
+    # the fence occupies almost the whole body with no boundary outside it
+    # other than the intro paragraph -- whatever the split, no part may start
+    # or end strictly inside the fence's interior.
+    fence_start = body.index("```")
+    fence_end = body.rindex("```") + 3
+    for s, e in spans:
+        assert not (fence_start < s < fence_end)
+        assert not (fence_start < e < fence_end)
+
+
+def test_no_split_part_is_below_floor_unless_whole_body_is():
+    items = "\n".join(f"- Item {i}: padding padding padding padding padding.\n" for i in range(50))
+    spans = ca.split_section_body(items)
+    if len(spans) > 1:
+        for s, e in spans:
+            assert (e - s) >= ca.CHILD_FLOOR
+
+
+# ---------------------------------------------------------------------------
+# Identifiers (FR-010, FR-011, FR-012)
+# ---------------------------------------------------------------------------
+
+def test_section_chunk_id_matches_documented_example():
+    chunk_id = ca.build_section_chunk_id("cqrs", ["CQRS", "Solution", "Benefits of CQRS"])
+    assert chunk_id == "azure:cqrs:solution--benefits-of-cqrs"
+
+
+def test_preamble_chunk_id_uses_reserved_segment():
+    chunk_id = ca.build_section_chunk_id("cqrs", ["CQRS"])
+    assert chunk_id == "azure:cqrs:preamble"
+
+
+def test_heading_path_segment_truncated_to_40_chars():
+    long_heading = "A" * 100
+    slug = ca.build_heading_path_slug(["Title", long_heading])
+    assert len(slug) <= 40
+
+
+def test_child_chunk_id_is_content_hash_not_ordinal():
+    parent_id = "azure:cqrs:problems-and-considerations"
+    id_a = ca.build_child_chunk_id(parent_id, "Some child text.")
+    id_b = ca.build_child_chunk_id(parent_id, "Some child text.")
+    id_c = ca.build_child_chunk_id(parent_id, "Different child text.")
+    assert id_a == id_b  # same content -> same id (determinism)
+    assert id_a != id_c  # different content -> different id
+    assert id_a.startswith(parent_id + ":")
+
+
+def test_finalize_section_ids_disambiguates_every_colliding_occurrence():
+    pending = [
+        {"baseChunkId": "azure:x:same", "content": "first"},
+        {"baseChunkId": "azure:x:same", "content": "second"},
+        {"baseChunkId": "azure:x:unique", "content": "third"},
+    ]
+    finalized = ca.finalize_section_ids(pending)
+    ids = [c["chunkId"] for c in finalized]
+    assert len(set(ids)) == 3
+    assert "azure:x:same" not in ids  # neither collider keeps the bare id
+    assert "azure:x:unique" in ids
+
+
+# ---------------------------------------------------------------------------
+# Real corpus: byte coverage, nesting, determinism (the assertions that
+# would have caught the two defects this feature closes)
+# ---------------------------------------------------------------------------
+
+def _load_manifest():
+    return ca._load_manifest()
+
+
+def _eligible_files():
+    manifest = _load_manifest()
+    return sorted(rel for rel in manifest if ca.is_concept_eligible(rel)), manifest
+
+
+def _reconstruct_document(post_fm_text: str, chunks: list[dict]) -> str:
+    """Reconstructs the post-frontmatter text from LEAF chunk spans only
+    (chunks that are not themselves a parent) plus the heading-line bytes
+    between them, in offset order.
+
+    SCOPE, precisely (an independent review of this suite found the original
+    wording overclaimed): this catches duplicated or overlapping spans
+    (reconstructed length would exceed the source's) and misaligned offsets
+    (test_real_corpus_content_equals_source_span_exactly covers this one
+    directly too). It does NOT catch a whole leaf being silently omitted --
+    a missing leaf's span just becomes part of the next gap, which is filled
+    unconditionally from post_fm_text, so a dropped section reconstructs
+    "successfully." That is the job of test_real_corpus_overall_byte_coverage_is_total,
+    which recomputes total claimable bytes independently of which chunks
+    chunk_file() actually emitted. The two tests are not redundant with each
+    other; do not remove one on the assumption the other already covers it."""
+    parent_ids = {c["parentChunkId"] for c in chunks if c["parentChunkId"]}
+    leaves = sorted(
+        (c for c in chunks if c["chunkId"] not in parent_ids),
+        key=lambda c: c["sourceOffset"],
     )
-    fixture_path = tmp_path / "throttling.md"
-    fixture_path.write_text(text, encoding="utf-8")
-    result = ca.chunk_file(fixture_path, "throttling")
-
-    cost_chunks = [c for c in result["chunks"] if c["kind"] == "cost"]
-    assert len(cost_chunks) == 1
-    assert "Make throttling decisions early" in cost_chunks[0]["content"]
-    assert "Track resource use" in cost_chunks[0]["content"]
-    assert cost_chunks[0]["content"] in text
-
-
-# ---------------------------------------------------------------------------
-# End-to-end: chunk_file() over the CQRS fixture
-# ---------------------------------------------------------------------------
-
-def test_chunk_file_end_to_end_on_cqrs_fixture(tmp_path):
-    fixture_path = tmp_path / "cqrs.md"
-    fixture_path.write_text(CQRS_FIXTURE, encoding="utf-8")
-
-    result = ca.chunk_file(fixture_path, "cqrs")
-
-    kinds = {c["kind"] for c in result["chunks"]}
-    assert "benefit" in kinds
-    assert "cost" in kinds
-    assert "when" in kinds
-
-    # SC-004: the H3-nested benefit content is recovered, not lost inside Solution.
-    benefit_chunks = [c for c in result["chunks"] if c["kind"] == "benefit"]
-    assert any("Independent scaling" in c["label"] or "independent-scaling" in c["chunkId"] for c in benefit_chunks)
-
-    # SC-001: every chunk's content is a verbatim substring of the source file.
-    for chunk in result["chunks"]:
-        assert chunk["content"] in CQRS_FIXTURE
-        # and the prefix must never be inside content (FR-013 / the fix-4 gap)
-        assert chunk["contextPrefix"] not in chunk["content"]
-
-    # FR-012: the cost item containing a markdown link keeps it byte-for-byte.
-    messaging = next(c for c in result["chunks"] if "Messaging" in c.get("label", ""))
-    assert "[Event Sourcing pattern](./event-sourcing.md)" in messaging["content"]
-
-    # Workload design: recognized, not unmapped, produces no chunk.
-    assert "Workload design" not in result["unmapped_headings"]
-    assert not any(c["label"] == "Workload design" for c in result["chunks"])
-
-    # doc_date captured from frontmatter.
-    assert result["doc_date"] == "2025-02-20"
-
-    # related-link target captured for candidate generation, without mutating content.
-    assert "./event-sourcing.md" in result["related_targets"]
+    # Gaps between leaves are expected -- they are the heading-line bytes
+    # ("## Solution\n") that delimit sections and are deliberately not part
+    # of any chunk's content (docs/DECISIONS.md's "Full body text" counting
+    # basis excludes heading markup throughout).
+    pieces = []
+    cursor = 0
+    for leaf in leaves:
+        pieces.append(post_fm_text[cursor:leaf["sourceOffset"]])
+        pieces.append(leaf["content"])
+        cursor = leaf["sourceOffset"] + leaf["sourceLength"]
+    pieces.append(post_fm_text[cursor:])
+    return "".join(pieces)
 
 
-def test_chunk_file_idempotent_chunk_ids_across_two_runs(tmp_path):
-    fixture_path = tmp_path / "cqrs.md"
-    fixture_path.write_text(CQRS_FIXTURE, encoding="utf-8")
-    result_a = ca.chunk_file(fixture_path, "cqrs")
-    result_b = ca.chunk_file(fixture_path, "cqrs")
-    ids_a = sorted(c["chunkId"] for c in result_a["chunks"])
-    ids_b = sorted(c["chunkId"] for c in result_b["chunks"])
-    assert ids_a == ids_b
+def test_real_corpus_leaf_chunks_reconstruct_every_document_exactly():
+    # Catches duplication, overlap, and offset misalignment -- NOT omission,
+    # which test_real_corpus_overall_byte_coverage_is_total exists to catch
+    # instead. See _reconstruct_document's docstring for why these are two
+    # separate, non-redundant guarantees.
+    _require_real_corpus()
+
+    eligible, manifest = _eligible_files()
+    assert len(eligible) > 0
+    for rel in eligible:
+        entry = manifest[rel]
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result = ca.chunk_file(path, concept_id, source_file=rel)
+        post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+        reconstructed = _reconstruct_document(post_fm_text, result["chunks"])
+        assert reconstructed == post_fm_text, f"reconstruction mismatch for {rel}"
 
 
-# ---------------------------------------------------------------------------
-# FR-020 / FR-021 / FR-022: unmapped-headings tracking (User Story 2)
-# ---------------------------------------------------------------------------
+def test_real_corpus_content_equals_source_span_exactly():
+    _require_real_corpus()
 
-def test_unmapped_heading_is_tracked_with_occurrence_and_not_a_matched_one(tmp_path):
-    text = """## Related patterns
-
-Some unrelated list of links.
-
-## Benefits
-
-- **Speed.** It's faster.
-"""
-    fixture_path = tmp_path / "some-pattern.md"
-    fixture_path.write_text(text, encoding="utf-8")
-    result = ca.chunk_file(fixture_path, "some-pattern")
-    assert "Related patterns" in result["unmapped_headings"]
-    assert "Benefits" not in result["unmapped_headings"]
+    eligible, manifest = _eligible_files()
+    for rel in eligible:
+        entry = manifest[rel]
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result = ca.chunk_file(path, concept_id, source_file=rel)
+        post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+        for chunk in result["chunks"]:
+            span = post_fm_text[chunk["sourceOffset"]:chunk["sourceOffset"] + chunk["sourceLength"]]
+            assert span == chunk["content"], f"{chunk['chunkId']} content != source span"
 
 
-def test_matched_but_discarded_heading_is_not_unmapped(tmp_path):
-    text = "## Workload design\n\nCross-references only.\n"
-    fixture_path = tmp_path / "some-pattern.md"
-    fixture_path.write_text(text, encoding="utf-8")
-    result = ca.chunk_file(fixture_path, "some-pattern")
-    assert "Workload design" not in result["unmapped_headings"]
+def test_real_corpus_parent_child_spans_nest_and_children_cover_parent_exactly():
+    _require_real_corpus()
+
+    eligible, manifest = _eligible_files()
+    found_a_split = False
+    for rel in eligible:
+        entry = manifest[rel]
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result = ca.chunk_file(path, concept_id, source_file=rel)
+        by_id = {c["chunkId"]: c for c in result["chunks"]}
+        children_by_parent: dict[str, list[dict]] = {}
+        for c in result["chunks"]:
+            if c["parentChunkId"]:
+                children_by_parent.setdefault(c["parentChunkId"], []).append(c)
+
+        for parent_id, children in children_by_parent.items():
+            found_a_split = True
+            parent = by_id[parent_id]
+            children_sorted = sorted(children, key=lambda c: c["sourceOffset"])
+            assert children_sorted[0]["sourceOffset"] == parent["sourceOffset"]
+            assert (
+                children_sorted[-1]["sourceOffset"] + children_sorted[-1]["sourceLength"]
+                == parent["sourceOffset"] + parent["sourceLength"]
+            )
+            cursor = parent["sourceOffset"]
+            for child in children_sorted:
+                assert child["sourceOffset"] == cursor, "gap or overlap between siblings"
+                assert child["sourceOffset"] >= parent["sourceOffset"]
+                assert (
+                    child["sourceOffset"] + child["sourceLength"]
+                    <= parent["sourceOffset"] + parent["sourceLength"]
+                )
+                cursor += child["sourceLength"]
+    assert found_a_split, "expected at least one section over the size cap in the real corpus"
 
 
-def test_build_unmapped_report_ranks_by_frequency_descending():
-    counts = {"Related patterns": 2, "Components": 5, "Workflow": 1}
-    report = ca.build_unmapped_report(counts)
-    idx_components = report.index("Components")
-    idx_related = report.index("Related patterns")
-    idx_workflow = report.index("Workflow")
-    assert idx_components < idx_related < idx_workflow
+def test_real_corpus_heading_path_root_is_document_title_and_preamble_is_singleton():
+    _require_real_corpus()
+
+    eligible, manifest = _eligible_files()
+    for rel in eligible:
+        entry = manifest[rel]
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result = ca.chunk_file(path, concept_id, source_file=rel)
+        title = result["display_name"]
+        for c in result["chunks"]:
+            assert c["headingPath"][0] == title
+        # A split preamble produces several rows sharing the title-only
+        # headingPath (a parent plus its children) -- what must stay unique
+        # is the number of top-level (unsplit-parent) preamble SECTIONS, not
+        # the row count.
+        preamble_sections = [
+            c for c in result["chunks"] if len(c["headingPath"]) == 1 and c["parentChunkId"] is None
+        ]
+        assert len(preamble_sections) <= 1, f"{rel}: more than one preamble section"
 
 
-def test_build_unmapped_report_states_zero_explicitly_when_empty():
-    report = ca.build_unmapped_report({})
-    assert "0" in report or "none" in report.lower() or "no unmapped" in report.lower()
+def test_real_corpus_no_chunk_id_collisions_across_whole_build():
+    _require_real_corpus()
+
+    eligible, manifest = _eligible_files()
+    all_ids: list[str] = []
+    for rel in eligible:
+        entry = manifest[rel]
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result = ca.chunk_file(path, concept_id, source_file=rel)
+        all_ids.extend(c["chunkId"] for c in result["chunks"])
+    assert len(all_ids) == len(set(all_ids)), "chunk_id collision somewhere in the real build"
 
 
-# ---------------------------------------------------------------------------
-# FR-023 / SC-005: concept candidate generation (User Story 3)
-# ---------------------------------------------------------------------------
+def test_real_corpus_two_runs_produce_identical_ids_spans_and_counts():
+    _require_real_corpus()
 
-def test_is_concept_eligible_matches_sc005_exactly():
-    assert ca.is_concept_eligible("docs/patterns/cqrs.md") is True
-    assert ca.is_concept_eligible("docs/patterns/retry-content.md") is True
-    assert ca.is_concept_eligible("docs/guide/architecture-styles/microservices.md") is True
-    assert ca.is_concept_eligible("docs/patterns/index.md") is False
-    assert ca.is_concept_eligible("docs/guide/index.md") is False
-    assert ca.is_concept_eligible("docs/guide/architecture-styles/index.md") is False
-    assert ca.is_concept_eligible("README.md") is False
-    assert ca.is_concept_eligible("CONTRIBUTING.md") is False
-    assert ca.is_concept_eligible("SECURITY.md") is False
-    assert ca.is_concept_eligible("docs/changelog.md") is False
-    assert ca.is_concept_eligible("docs/guide/choose-azure-container-service.md") is False
-    assert ca.is_concept_eligible("docs/guide/container-service-general-considerations.md") is False
+    eligible, manifest = _eligible_files()
+    for rel in eligible[:10]:  # a representative sample keeps this fast; full-corpus determinism
+        entry = manifest[rel]  # is additionally exercised implicitly by every other real-corpus test
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result_a = ca.chunk_file(path, concept_id, source_file=rel)
+        result_b = ca.chunk_file(path, concept_id, source_file=rel)
+        key = lambda c: (c["chunkId"], c["sourceOffset"], c["sourceLength"])
+        assert sorted(map(key, result_a["chunks"])) == sorted(map(key, result_b["chunks"]))
+        assert len(result_a["chunks"]) == len(result_b["chunks"])
 
 
-def test_build_candidate_normalizes_related_link_targets_to_concept_ids():
-    related = ca.normalize_related_targets({"./event-sourcing.md", "./saga-content.md", "https://external.example/x"})
-    assert related == ["event-sourcing", "saga"]
+def test_real_corpus_overall_byte_coverage_is_total():
+    _require_real_corpus()
+
+    eligible, manifest = _eligible_files()
+    total_source_bytes = 0
+    total_heading_bytes = 0
+    total_leaf_bytes = 0
+    for rel in eligible:
+        entry = manifest[rel]
+        path = ca.resolve_local_path(entry["local_path"])
+        concept_id = ca.derive_concept_id(Path(rel).stem)
+        result = ca.chunk_file(path, concept_id, source_file=rel)
+        post_fm_text = ca.strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+        total_source_bytes += len(post_fm_text)
+
+        total_heading_bytes += _independent_heading_bytes(post_fm_text)
+
+        parent_ids = {c["parentChunkId"] for c in result["chunks"] if c["parentChunkId"]}
+        for c in result["chunks"]:
+            if c["chunkId"] not in parent_ids:
+                total_leaf_bytes += c["sourceLength"]
+
+    # Leaf spans plus heading lines must account for the source exactly. Stated
+    # as a sum, not a ratio, for two reasons. The heading count comes from
+    # _independent_heading_bytes above rather than ca.parse_sections -- deriving
+    # the denominator from the function under test lets the two move together
+    # and cancel out. And this form catches a swallowed heading: its bytes would
+    # be absorbed into the previous body and counted as leaf bytes while the
+    # independent scan still counts them as heading bytes, so the sum overshoots.
+    # A ratio with a self-derived denominator stays at 1.0 through that defect.
+    accounted = total_leaf_bytes + total_heading_bytes
+    print(
+        f"\n[coverage] {len(eligible)} concepts: leaf {total_leaf_bytes} + "
+        f"headings {total_heading_bytes} = {accounted} / source {total_source_bytes}"
+    )
+    assert accounted == total_source_bytes, (
+        f"{total_source_bytes - accounted} source bytes unaccounted for "
+        f"(leaf {total_leaf_bytes}, headings {total_heading_bytes})"
+    )

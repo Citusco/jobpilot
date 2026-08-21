@@ -35,10 +35,9 @@ def _rmtree_force(path: Path):
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
 SOURCES_YAML = CORPUS / "sources.yaml"
-RAW_DIR = CORPUS / "raw"
+RAW_DIR = raw_root()
 LICENSES_DIR = CORPUS / "licenses"
 RESULTS_PATH = CORPUS / "_meta" / "git-fetch-results.json"
 
@@ -65,17 +64,33 @@ def fetch_one(source: dict, force: bool) -> dict:
         if dest.exists():
             _rmtree_force(dest)
         RAW_DIR.mkdir(parents=True, exist_ok=True)
-        print(f"[{sid}] cloning {repo} -> {dest}")
-        run([
-            "git", "clone",
-            "--depth", "1",
-            "--filter=blob:none",
-            "--sparse",
-            "--no-checkout",
-            repo, str(dest),
-        ])
-        run(["git", "sparse-checkout", "set", *paths], cwd=dest)
-        run(["git", "checkout"], cwd=dest)
+        pin = source.get("commit")
+        if pin:
+            # Fetch the recorded commit rather than whatever the default branch
+            # points at today. Without this, "re-fetch and verify against the
+            # manifest" can only detect drift, never undo it -- exercised for
+            # real on 2026-08-21, when azure came back with 17 of 58 files
+            # changed and 1 gone. GitHub serves fetch-by-sha, so the shallow,
+            # blobless, sparse shape is preserved.
+            print(f"[{sid}] fetching pinned {pin[:12]} from {repo} -> {dest}")
+            dest.mkdir(parents=True, exist_ok=True)
+            run(["git", "init", "-q", str(dest)])
+            run(["git", "remote", "add", "origin", repo], cwd=dest)
+            run(["git", "fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", pin], cwd=dest)
+            run(["git", "sparse-checkout", "set", *paths], cwd=dest)
+            run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
+        else:
+            print(f"[{sid}] cloning {repo} -> {dest} (UNPINNED: no commit in sources.yaml)")
+            run([
+                "git", "clone",
+                "--depth", "1",
+                "--filter=blob:none",
+                "--sparse",
+                "--no-checkout",
+                repo, str(dest),
+            ])
+            run(["git", "sparse-checkout", "set", *paths], cwd=dest)
+            run(["git", "checkout"], cwd=dest)
 
     commit_sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=dest, check=True,
@@ -86,8 +101,16 @@ def fetch_one(source: dict, force: bool) -> dict:
     for lic in dest.glob("LICENSE*"):
         shutil.copy(lic, LICENSES_DIR / f"{sid}-{lic.name}")
 
+    pin = source.get("commit")
+    if pin and commit_sha != pin:
+        raise SystemExit(
+            f"[{sid}] checked out {commit_sha[:12]} but sources.yaml pins {pin[:12]}. "
+            f"Refusing to continue: the tree on disk would not be the one the manifest describes."
+        )
+
     n_files = sum(1 for p in paths for _ in (dest / p).rglob("*") if _.is_file())
-    print(f"[{sid}] pinned commit {commit_sha[:12]}, {n_files} files under configured paths")
+    state = "pinned" if pin else "UNPINNED, recorded"
+    print(f"[{sid}] {state} commit {commit_sha[:12]}, {n_files} files under configured paths")
 
     return {
         "id": sid,

@@ -6,10 +6,8 @@ html sources: reflects an actual --fetch (manifest row count + total bytes)
 once run; before that, falls back to discovery-only counts.
 """
 import json
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
 MANIFEST_DIR = CORPUS / "_meta" / "manifest"
 
 git_results = json.loads((CORPUS / "_meta" / "git-fetch-results.json").read_text(encoding="utf-8"))

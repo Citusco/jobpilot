@@ -26,8 +26,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
 MANIFEST_DIR = CORPUS / "_meta" / "manifest"
 REPORT_PATH = CORPUS / "reports" / "structure-probe.md"
 
@@ -60,7 +59,7 @@ def file_length(path: Path) -> int:
 def probe_source(source_id: str) -> dict:
     manifest_path = MANIFEST_DIR / f"{source_id}.jsonl"
     rows = [json.loads(l) for l in manifest_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    files = [CORPUS / r["local_path"] for r in rows]
+    files = [resolve_local_path(r["local_path"]) for r in rows]
 
     heading_counter = Counter()          # heading text -> total occurrences across all files
     heading_file_counter = Counter()     # heading text -> number of DISTINCT files it appears in

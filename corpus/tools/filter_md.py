@@ -17,9 +17,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "corpus"
-RAW_DIR = CORPUS / "raw"
+from corpus_paths import CORPUS, ROOT, raw_root, resolve_local_path  # noqa: F401
+RAW_DIR = raw_root()
 RESULTS_PATH = CORPUS / "_meta" / "git-fetch-results.json"
 REPORT_PATH = CORPUS / "_meta" / "filter-report.json"
 

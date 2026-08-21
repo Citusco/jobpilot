@@ -1016,3 +1016,313 @@ decision the first must not exist on that side at all and the second belongs to 
 service, so both are removed. A declared dependency is a statement about what a service does;
 these two currently state the opposite of the boundary.
 **Status**: active
+
+## 2026-08-11 — Implementation decisions settled while building SCRUM-44, not fixed by the spec
+
+**Decision**: five judgment calls came up executing `specs/006-corpus-structure-rebuild`'s tasks
+that the spec, plan, and data-model left open. Recorded here per that feature's own instruction
+to append anything decided during implementation that wasn't already settled.
+
+1. **Chunk content is never trimmed of surrounding whitespace.** A section's span runs from
+   immediately after its heading line's newline through the start of the next heading line (or
+   EOF), verbatim — no leading/trailing blank-line stripping. This makes the coverage invariant
+   trivial to prove by construction: sections partition (post-frontmatter text minus heading-line
+   bytes) exactly, with the "Full body text" denominator already established by the `kind`-filter
+   measurement above. Trimming would have required deciding where the trimmed whitespace
+   "belongs" for coverage-accounting purposes, for a purely cosmetic gain — a stray leading
+   newline in a stored `content` field costs nothing a downstream consumer can't strip at display
+   time, and the stored field itself stays exactly byte-reproducible.
+
+2. **A preamble's `chunk_id` heading-path-slug is the literal reserved segment `preamble`.**
+   `data-model.md`'s scheme (`{source}:{concept}:{heading-path-slug}`) has no example for a
+   title-only `headingPath` (length 1, no segments below the title to slugify). `azure:cqrs:cqrs`
+   was considered and rejected as confusing; `preamble` is unambiguous and — like any other
+   heading-path-slug — still goes through the existing content-hash collision disambiguation if a
+   document ever has a literal `## Preamble` heading of its own.
+
+3. **Split-section parent rows ARE stored as full-span `doc_chunk` rows, and coverage is computed
+   over leaf chunks only.** The self-referencing `parentChunkId` foreign key requires the parent
+   row to exist, so a split section produces one parent row (full section span, `parentChunkId`
+   null) plus N child rows (sub-spans). Counting both toward "coverage" would double-count claimed
+   bytes for every split section. The invariant that matters is over the *leaves* of the
+   parent/child tree — a chunk with no children, whether an unsplit section or a child of a split
+   one — and that is what `test_real_corpus_overall_byte_coverage_is_total` and
+   `test_real_corpus_leaf_chunks_reconstruct_every_document_exactly` both compute against.
+
+4. **Directive-line stripping (`split_around_directives` / `strip_directives`, from
+   `specs/005-corpus-ingest-foundation`) is removed, not carried forward.** The old chunker
+   excised `:::image:::`-style directive lines from content and emitted separate chunks around
+   the gap — under the old `kind`-classified, partial-coverage world this was harmless, but under
+   this feature's "every byte accounted for" invariant it is a real, unrecoverable gap: the
+   directive line's bytes belonged to no chunk at all. Directive markup is now stored verbatim as
+   part of whatever chunk it falls inside, which costs nothing (it is inert text to any downstream
+   consumer) and preserves exactness. The now-orphaned functions and their tests were deleted
+   rather than left dead in the module.
+
+5. **The candidate JSONL gains a `title` field** (`corpus/_meta/candidates/azure.jsonl`): the raw
+   H1/frontmatter title, unstripped of a trailing "Pattern"/"Architecture Style" suffix — distinct
+   from the already-existing `name` field, which has that suffix removed. `data-model.md`'s
+   `ConceptTerm` population table names "H1 or frontmatter title" as a term source, but no field
+   carrying that raw string existed anywhere before this feature; `chunk_azure.py` now captures it
+   (frontmatter `title` first, falling back to the document's H1, searched only within the
+   preamble so a `# ` line inside a later code sample is never mistaken for the title).
+
+   **Corrects** the "124 terms over 49 concepts" figure `data-model.md` recorded as measured:
+   that number predates the `title` field existing, so it could not have been measured against
+   this implementation. The actual figure, measured after implementing: **105 terms over the 49
+   admitted concepts** (2.14/concept), rising to **147 terms over all 70 concepts** (49 admitted +
+   21 related-edge) once related-edge stubs are included. The gap from 124 is fully explained, not
+   a defect: for the 43 non-architecture-style pattern documents, the raw title (e.g. "Ambassador
+   Pattern") and the mechanically-derived "name + trailing pattern" variant (e.g. "Ambassador
+   pattern") normalize identically, so they collapse to one `title`-type term under the existing
+   precedence rule — 2 terms/concept for those 43, 3 for the 6 architecture-style documents (whose
+   raw title, "X Architecture Style", does not collide with "X pattern"). `SC-003` (every phrase
+   resolves to exactly one concept) holds regardless of the exact count: 0 cross-concept
+   collisions, verified by `tests/unit/corpus/concept-terms.test.ts` against the real candidate
+   file.
+**Status**: active
+
+## 2026-08-11 — Related-edge stub concepts default to `kind: domain`; embedding input is name + terms + a 500-character opening
+
+**Decision**: two further judgment calls, both additive and easily revised:
+
+1. A related-edge stub concept (no admitted material, id/name only) is created with
+   `kind: ConceptKind.domain` — a generic default, since its real kind is genuinely unknown until
+   material is admitted for it. `name` is derived the same way `chunk_azure.py`'s own
+   no-frontmatter fallback already works (humanize the id: split on `-`, capitalize each word).
+2. The text submitted for embedding (FR-019) is `name`, then `also known as: <comma-joined
+   terms>` (its `concept_terms` entries, excluding the `id`-type one — a slug adds nothing a
+   name-based embedding needs), then the first **500 characters** of its preamble chunk where
+   material exists. 500 was chosen as "enough to carry the definition, not so much it dilutes
+   toward the rest of the document" — no measurement was taken to tune this number, and it is
+   cheap to change (recomputing ~70 vectors costs seconds, per the existing embedding-dimension
+   entry's reversibility note).
+
+**Why not deferred to a spec update**: both are additive, touch no identifier, and are exactly
+the kind of "nullable column / nullable default" choice the 2026-08-10 "Reversibility decides
+what must be settled now" entry says doesn't need to be settled in advance.
+**Status**: active
+
+## 2026-08-11 — Measured: the positive/negative similarity baselines overlap
+
+**Decision**: record the measurement FR-022 exists to produce, without acting on it.
+
+```
+positive (related-edge pairs, n=107)     p10 = 0.30
+negative (all other pairs, n=2,308)      p90 = 0.44
+```
+
+Measured twice — once against the real corpus after a normal ingest, once again after a full
+`prisma migrate reset` and rebuild from zero — with consistent results (p10 0.3016–0.3017, p90
+0.4419 both times; embeddings vary by a few thousandths of a percent run to run, consistent with
+provider-side non-determinism, not a bug).
+
+**What this means**: the positive baseline's 10th percentile sits *below* the negative baseline's
+90th percentile. Per the 2026-08-10 "Embedding dimension is 1536" entry's own reconsideration
+trigger — "if they overlap heavily, 1536 is not separating this concept set and `large` is worth
+trying" — that trigger has now fired, on real data. This entry records the fact; it does not act
+on it. Trying `text-embedding-3-large` is out of scope for SCRUM-44, which is about the corpus
+build finishing and reporting the evidence (FR-022 says exactly this — "do not choose a
+threshold here"), not about closing the loop that evidence opens. The next feature that resolves
+a JD phrase against these vectors should read this entry first.
+**Status**: active
+
+## 2026-08-11 — Correction: the measured baselines do not calibrate resolve's threshold
+
+**Supersedes the conclusion of** *2026-08-11 — Measured: the positive/negative similarity
+baselines overlap*. The measurement itself stands and is not repudiated: related-edge pairs
+p10 = 0.30 over n=107, all other pairs p90 = 0.44 over n=2,308, stable across two full rebuilds.
+What does not follow is the inference drawn from it.
+
+**What was measured versus what FR-022 asks for**:
+
+```
+DESIGN.md 8 specifies      positive = a concept's own aliases used as queries,
+                            where the answer must be that same concept
+                            negative = completely unrelated words
+                            -> a query-to-concept distribution
+
+what was implemented        positive = related-edge pairs between two *different* concepts
+                            negative = every other concept pair
+                            -> a concept-to-concept distribution
+```
+
+These are not the same relation. `related` edges join concepts a reader should be able to tell
+apart — `cqrs` and `event-sourcing`, `throttling` and `rate-limiting`. If those pairs scored
+*high*, that would be evidence `resolve` is likely to confuse them, not evidence the embedding
+is healthy. Used as a positive baseline the sign is inverted.
+
+The superseded entry therefore states that the 2026-08-10 dimension-reconsideration trigger
+"has now fired, on real data". It has not. That trigger concerns whether the model separates a
+query from a concept; nothing measured here bears on it, and no conclusion about
+`text-embedding-3-small` versus `-large` is supported by this data either way.
+
+**Why the specified calibration was not run**: it needs alias phrasings, and `concept_terms`
+holds only mechanically derived entries — hand-authored aliases were deliberately deferred
+until a measurement shows which category automatic resolution fails on. The specified positive
+baseline is therefore not constructible yet. The correct record was "the specified calibration
+cannot be run at this stage, and here is why", rather than substituting a different relation and
+reporting its result against the original trigger.
+
+**What the numbers do say**, stated without overreach: concepts joined by a `related` edge are
+not reliably more similar, under this embedding, than concepts that are not. That is a fact
+about the `related` graph's semantics — those edges record "the author linked these", not "these
+mean nearly the same thing" — and it is mildly reassuring for the point cloud, where edge
+strength and node relevance are meant to be independent signals.
+
+**What must happen before a threshold is chosen**: build a query-side sample that does not come
+from the same source as the concept records — real job-description phrasings are the
+uncontaminated option already available, and Experiment 4's extracted items exist for this. Then
+run DESIGN.md 8's calibration as written. Until then no threshold, and no model comparison,
+rests on evidence.
+
+**Process note**: the substitution was visible in the entry's own labels ("related-edge pairs",
+"all other pairs") and still produced a wrong conclusion that was recorded as active and pointed
+at the next feature. Naming what you measured is not sufficient; the check is whether the thing
+measured is the thing the decision turns on.
+**Status**: active
+
+## 2026-08-11 — Correction: the corpus is not pinned, so re-fetching does not reproduce it
+
+**Corrects** *2026-08-10 — Correction: the raw corpus is re-fetchable, not committed*, which
+claimed "`corpus/sources.yaml` pins each source to an upstream commit". It does not. The same
+claim appears in this feature's migration comment ("reproducible from the source layer,
+re-fetched and verified against `corpus/_meta/manifest/`") and is wrong there too.
+
+**Measured, not reasoned.** The `corpus-build` worktree was deleted, taking the only copy of
+`corpus/raw/` with it, so the documented recovery path was exercised for real:
+
+```
+python corpus/tools/fetch_git.py --only azure
+
+manifest commit_sha   a8c749f836cf...      what SCRUM-44 was built against
+re-fetched commit     fbb66e47c92d         whatever HEAD happened to be
+
+against the 58 manifest entries:   40 identical
+                                   17 changed
+                                    1 gone     (priority-queue-content.md)
+                                    1 added    (59 files now, 50 concept-eligible)
+```
+
+**Why**: `sources.yaml` carries `repo` and `paths` and no commit field, and `fetch_git.py` always
+runs `git clone --depth 1` against the default branch, then records the HEAD it landed on as
+`commit_sha`. Its own log line says "pinned commit {sha}", which reads as though it pinned
+something; it recorded, it did not pin.
+
+**What the manifest is actually good for**: detection, not recovery. The recorded `commit_sha`
+and per-file `sha256` make drift *visible* — that is how the 17/1/1 above was established at all,
+and it is worth keeping. What they cannot do is return the original bytes.
+
+**What this affects**:
+
+- The safety argument for `TRUNCATE doc_chunks` is weaker than the migration comment states. The
+  table can be rebuilt, but from *current* upstream, not from the state it was built against.
+- Verbatim citations are the real exposure. A `verbatim` recorded against a file that upstream
+  has since edited will no longer be found in the re-fetched text, and hard constraint 3's
+  entailment check cannot recover from a substring that has vanished. Nothing depends on this
+  yet — no citations are stored — but the question-generation feature cannot land on an unpinned
+  corpus without accepting silent citation rot.
+- SCRUM-44's reported figures (49 concepts, 490 sections, 607 rows) describe a corpus state that
+  no longer exists locally and cannot be restored. The current tree measures 50 concepts. The
+  assertions are invariants and still hold, which is why the suite passes either way; the
+  headline counts are snapshots and should be read as such.
+
+**Not fixed here.** Pinning is a change to `sources.yaml` plus commit-aware fetching in
+`fetch_git.py`, across 20 sources, and it does not belong in a PR about chunking. Recorded as the
+next corpus-layer piece of work, ahead of anything that stores a citation.
+
+## 2026-08-21 — The raw corpus moves outside the working tree, and every git source is pinned
+
+**Decision**: two changes to the corpus layer, both prompted by losing the corpus for real.
+
+1. `corpus/tools/corpus_paths.py` resolves the raw root from `JOBPILOT_CORPUS_RAW`, falling
+   back to `corpus/raw/`. Every tool imports it. Manifest `local_path` values stay written as
+   `raw/<source>/...` no matter where the tree physically lives, so manifests remain portable and
+   no existing record needed rewriting.
+2. All 15 git sources in `corpus/sources.yaml` carry a `commit:` taken from the manifest's
+   recorded `commit_sha`, and `fetch_git.py` fetches that commit rather than the default branch.
+   It refuses to continue if the checked-out sha differs from the pin.
+
+**What happened**: the `corpus-build` worktree was removed at 2026-08-21 18:47:29 — `.git/worktrees`
+and `.claude/worktrees` share that mtime to the millisecond, which is a `git worktree remove`
+rather than a directory deletion, since the latter would leave a prunable registration behind.
+It took 326 MB across 20 sources with it: the only copy.
+
+**Why the safeguard did not fire**: `git worktree remove` refuses to discard a worktree with
+uncommitted changes. That worktree had none — every commit was pushed, `git status` was empty.
+But **"clean" counts only tracked files**, and gitignored data is invisible to it. A worktree
+holding the sole copy of 326 MB looked disposable to the tool that removed it, and no warning was
+possible because git could not see what was at stake.
+
+This generalises past worktrees: any tooling that reasons about "is there unsaved work here"
+answers using the index, so anything deliberately kept out of the index is outside that reasoning.
+The fix is not to be more careful; it is to stop keeping irreplaceable data where the answer is
+computed.
+
+**Why pinning had to come with it**: the documented recovery path was re-fetch plus manifest
+verification. Exercised for real, azure came back at a different commit with 17 of 58 files
+changed and 1 gone — the manifest detected the drift, which is worth having, but could not undo
+it. With the pin in place the same re-fetch now returns **58 of 58 files sha256-identical**, and
+the byte-coverage assertion reproduces the original figures exactly (49 concepts, leaf 765,276 +
+headings 9,732 = 775,008). Recovery is now real rather than nominal.
+
+**Scope and remaining exposure**: the five `html` sources have no commit to pin — they are page
+fetches, and re-fetching them will drift with the upstream site. Their manifests still record a
+per-file `sha256`, so drift stays detectable, and none of them is currently ingested. This
+matters before anything stores a `verbatim` citation: an unpinned source turns an upstream edit
+into a citation that silently stops matching, which `content.includes()` reports only as `false`.
+**Status**: active
+
+## 2026-08-21 — The html manifests are refreshed to the re-fetched state, and sha256 is unreliable for pages that carry a nonce
+
+**Decision**: after restoring the corpus, the five `html` sources' manifests are replaced with
+the re-fetched state rather than kept at their pre-loss values. The pre-loss manifests described
+a corpus that no longer exists and can never be obtained again, so keeping them would leave a
+tracked record that permanently matches nothing. The measurement they would have preserved is
+recorded here instead, which is the right place for it.
+
+**Restoration, measured against the pre-loss manifests**:
+
+```
+15 git sources    5,905 files    5,905 identical      0 changed      0 missing
+ 5 html sources   1,533 files    1,151 identical    382 changed      0 missing
+                  -------------------------------------------------------------
+                  7,438 files    7,056 identical    382 changed      0 missing
+```
+
+The git side is byte-exact because of the pins added in the previous entry; before them the same
+re-fetch of azure alone returned 17 of 58 files changed and 1 gone. Nothing is missing on the
+html side either, because `fetch_html.py` now recovers its URL list from the manifest's
+`source_url` rather than re-crawling — re-crawling would have returned a different set of pages,
+since discovery follows whatever the site links today.
+
+**The 382 needs reading carefully, not taking at face value**:
+
+```
+msio          0 / 53     clean
+sre           0 / 102    clean
+aws-wa        7 / 238    small, real
+fowler      155 / 920    static site, most likely real content change
+anthropic   220 / 220    not a measurement -- see below
+```
+
+**anthropic's 100% is an artifact.** Its pages carry a per-request CSP nonce
+(`nonce="4hP3D4ayYLmS9EC6Z7pe+A=="`), so every byte-level hash differs on every fetch whether or
+not a word changed. For pages like these **sha256 cannot function as a drift detector at all** —
+it reports "changed" unconditionally, which is indistinguishable from reporting nothing. There is
+genuine change mixed in (the first file grew from 790,146 to 865,301 bytes), but the hash cannot
+separate it from the noise.
+
+**Consequences worth carrying forward**:
+
+- Do not treat an html source's sha256 mismatch as evidence of content change without first
+  checking whether the page carries per-request content. A future drift report should strip
+  nonces and similar volatile attributes before hashing, or the signal is worthless for the
+  sources that most need watching.
+- This sharpens the exposure noted in the previous entry. git sources are now reproducible;
+  html sources are neither pinnable nor, in the nonce case, checkable. Anything that stores a
+  `verbatim` citation against an html source is exposed to silent citation rot with no
+  instrument that would detect it.
+- None of the five is ingested today, so nothing is broken now. The constraint is on what may be
+  admitted later, not on what exists.
+**Status**: active
