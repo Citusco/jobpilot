@@ -1272,3 +1272,57 @@ per-file `sha256`, so drift stays detectable, and none of them is currently inge
 matters before anything stores a `verbatim` citation: an unpinned source turns an upstream edit
 into a citation that silently stops matching, which `content.includes()` reports only as `false`.
 **Status**: active
+
+## 2026-08-21 — The html manifests are refreshed to the re-fetched state, and sha256 is unreliable for pages that carry a nonce
+
+**Decision**: after restoring the corpus, the five `html` sources' manifests are replaced with
+the re-fetched state rather than kept at their pre-loss values. The pre-loss manifests described
+a corpus that no longer exists and can never be obtained again, so keeping them would leave a
+tracked record that permanently matches nothing. The measurement they would have preserved is
+recorded here instead, which is the right place for it.
+
+**Restoration, measured against the pre-loss manifests**:
+
+```
+15 git sources    5,905 files    5,905 identical      0 changed      0 missing
+ 5 html sources   1,533 files    1,151 identical    382 changed      0 missing
+                  -------------------------------------------------------------
+                  7,438 files    7,056 identical    382 changed      0 missing
+```
+
+The git side is byte-exact because of the pins added in the previous entry; before them the same
+re-fetch of azure alone returned 17 of 58 files changed and 1 gone. Nothing is missing on the
+html side either, because `fetch_html.py` now recovers its URL list from the manifest's
+`source_url` rather than re-crawling — re-crawling would have returned a different set of pages,
+since discovery follows whatever the site links today.
+
+**The 382 needs reading carefully, not taking at face value**:
+
+```
+msio          0 / 53     clean
+sre           0 / 102    clean
+aws-wa        7 / 238    small, real
+fowler      155 / 920    static site, most likely real content change
+anthropic   220 / 220    not a measurement -- see below
+```
+
+**anthropic's 100% is an artifact.** Its pages carry a per-request CSP nonce
+(`nonce="4hP3D4ayYLmS9EC6Z7pe+A=="`), so every byte-level hash differs on every fetch whether or
+not a word changed. For pages like these **sha256 cannot function as a drift detector at all** —
+it reports "changed" unconditionally, which is indistinguishable from reporting nothing. There is
+genuine change mixed in (the first file grew from 790,146 to 865,301 bytes), but the hash cannot
+separate it from the noise.
+
+**Consequences worth carrying forward**:
+
+- Do not treat an html source's sha256 mismatch as evidence of content change without first
+  checking whether the page carries per-request content. A future drift report should strip
+  nonces and similar volatile attributes before hashing, or the signal is worthless for the
+  sources that most need watching.
+- This sharpens the exposure noted in the previous entry. git sources are now reproducible;
+  html sources are neither pinnable nor, in the nonce case, checkable. Anything that stores a
+  `verbatim` citation against an html source is exposed to silent citation rot with no
+  instrument that would detect it.
+- None of the five is ingested today, so nothing is broken now. The constraint is on what may be
+  admitted later, not on what exists.
+**Status**: active
