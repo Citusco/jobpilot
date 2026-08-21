@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { embedResponseSchema } from './schemas/embed-response.schema.js';
-import { extractResponseSchema, type ExtractResponse } from './schemas/extract-response.schema.js';
+import { buildExtractResponseSchema, type ExtractResponse } from './schemas/extract-response.schema.js';
 
 const DEFAULT_AGENT_SERVICE_URL = 'http://localhost:8000';
 const TIMEOUT_MS = 30_000;
@@ -46,7 +46,10 @@ export class AgentOrchestrationClient {
     }
 
     const json: unknown = await response.json();
-    const parsed = extractResponseSchema.safeParse(json);
+    // The schema is built from the text we submitted, because it asserts that every
+    // evidence span is a substring of it -- a paraphrased span fails here rather than
+    // being stored as evidence that cannot be found in the posting it claims to quote.
+    const parsed = buildExtractResponseSchema(text).safeParse(json);
     if (!parsed.success) {
       throw new AgentOrchestrationUnavailableError('Agent orchestration service returned an invalid response', {
         cause: parsed.error,
