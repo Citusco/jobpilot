@@ -13,6 +13,11 @@ export interface ConceptForEdges {
   conceptId: string;
   related: string[];
   embedding: number[] | null;
+  /**
+   * Whether the concept has source material behind it. A concept without it keeps its
+   * authored edges but generates no inferred ones -- see `assembleEdges`.
+   */
+  hasCorpus: boolean;
 }
 
 export interface GraphEdge {
@@ -72,8 +77,23 @@ export function assembleEdges(
 ): AssembledEdges {
   const ids = concepts.map((concept) => concept.conceptId).sort((x, y) => x.localeCompare(y));
   const present = new Set(ids);
+  // Only concepts with material contribute a vector to *inferred* edges. A grey concept's
+  // vector is built from its name and terms with no definition text behind it, so short
+  // generic nouns -- `caching`, `messaging`, `patterns` -- embed near one another because
+  // they are short generic nouns, not because the concepts relate. Measured on the real
+  // corpus before this rule: 69 of 240 inferred edges joined two grey concepts, 28.7%
+  // against a random expectation of 8.1%, and five of the eight highest-degree nodes were
+  // grey. The densest region of the map was the region with nothing behind it.
+  //
+  // This is FR-010's reasoning applied to edges rather than to matching: a representation
+  // built from a name alone must not be judged on the same footing as one built from real
+  // text. Grey concepts stay in the graph and keep every authored edge -- those were
+  // written by a document author and are real -- because a grey node exists precisely to
+  // show that something is known and unmaterialised.
   const vectors = new Map(
-    concepts.filter((c) => c.embedding !== null).map((c) => [c.conceptId, c.embedding!]),
+    concepts
+      .filter((c) => c.embedding !== null && c.hasCorpus)
+      .map((c) => [c.conceptId, c.embedding!]),
   );
 
   const authoredKeys = new Set<string>();

@@ -24,6 +24,7 @@ const onCircle = (conceptId: string, theta: number, related: string[] = []): Con
   conceptId,
   related,
   embedding: [Math.cos(theta), Math.sin(theta)],
+  hasCorpus: true,
 });
 
 const key = (edge: { a: string; b: string }) => `${edge.a}|${edge.b}`;
@@ -103,6 +104,7 @@ describe('the inferred cut targets a mean degree, not a similarity value (FR-013
     conceptId: String.fromCharCode(97 + index),
     related: [],
     embedding: Array.from({ length: 6 }, (_, axis) => (axis === index ? 1 + lean : lean)),
+    hasCorpus: true,
   }));
 
   it('reaches the target even when every similarity is below the value measured today', () => {
@@ -165,7 +167,7 @@ describe('against the real 70 concept vectors', () => {
   beforeAll(async () => {
     await prisma.$connect();
     const meta = await prisma.concept.findMany({
-      select: { conceptId: true, related: true },
+      select: { conceptId: true, related: true, hasCorpus: true },
       orderBy: { conceptId: 'asc' },
     });
     const vectors = await prisma.$queryRaw<{ conceptId: string; embedding: string | null }[]>`
@@ -181,6 +183,7 @@ describe('against the real 70 concept vectors', () => {
         conceptId: concept.conceptId,
         related: concept.related,
         embedding: JSON.parse(byId.get(concept.conceptId) ?? 'null') as number[] | null,
+        hasCorpus: concept.hasCorpus,
       }));
   });
 
@@ -221,16 +224,18 @@ describe('against the real 70 concept vectors', () => {
       degree.set(edge.b, degree.get(edge.b)! + 1);
     }
 
-    expect(universe).toHaveLength(69);
-    expect(authored).toHaveLength(105);
-    expect(inferred).toHaveLength(240);
+    // 67 is a consequence of the exclusion rule, not a target: 70 rows minus the three
+    // navigation pages.
+    expect(universe).toHaveLength(67);
+    expect(authored).toHaveLength(103);
+    expect(inferred).toHaveLength(232);
     expect((2 * (authored.length + inferred.length)) / universe.length).toBeCloseTo(10, 1);
     expect([...degree.values()].filter((count) => count === 0)).toEqual([]);
-    // Lands close to the 0.44 measured by hand, which is the point: the value is an
-    // outcome of the target, not an input, so it moves with the corpus instead of
-    // silently drifting away from the density it was chosen for.
-    expect(inferredCut).toBeGreaterThan(0.42);
-    expect(inferredCut).toBeLessThan(0.46);
+    // The cut moved from 0.4384 to 0.40 when grey concepts stopped contributing
+    // candidates, which is the whole reason FR-013 targets a degree: the value follows
+    // the candidate pool instead of being asserted independently of it.
+    expect(inferredCut).toBeGreaterThan(0.38);
+    expect(inferredCut).toBeLessThan(0.42);
   });
 
   it('finds the relationships the source documents never asserted', () => {
@@ -238,20 +243,57 @@ describe('against the real 70 concept vectors', () => {
     const { authored, inferred } = assembleEdges(universe, TARGET_MEAN_DEGREE);
     const authoredKeys = new Set(authored.map(key));
 
-    for (const pair of ['messaging|messaging-bridge', 'gateway-offloading|gateway-routing']) {
+    for (const pair of ['big-compute|big-data', 'gateway-offloading|gateway-routing']) {
       expect(authoredKeys.has(pair)).toBe(false);
       expect(inferred.map(key)).toContain(pair);
     }
   });
 
-  it('drops the navigation page the corpus admitted as a concept (FR-023)', () => {
-    // `index` is an Azure navigation page, not a concept. Its similarity to `index-table`
-    // is 0.71 -- the single strongest pair in the corpus -- and entirely meaningless.
-    const withIndex = assembleEdges(all, TARGET_MEAN_DEGREE);
-    expect(withIndex.inferred.map(key)).toContain('index|index-table');
+  it('infers no edge from a concept with no material, but keeps its authored ones', () => {
+    // Grey vectors come from a name and its terms with no definition text, so short
+    // generic nouns embed near one another because they are short generic nouns. Before
+    // this rule 69 of 240 inferred edges joined two grey concepts -- 28.7% against a
+    // random expectation of 8.1% -- and five of the eight highest-degree nodes were grey,
+    // which put the densest region of the map exactly where there is nothing to open.
+    const universe = all.filter((concept) => !NON_CONCEPT_IDS.has(concept.conceptId));
+    const grey = new Set(
+      universe.filter((concept) => !concept.hasCorpus).map((concept) => concept.conceptId),
+    );
+    const { authored, inferred } = assembleEdges(universe, TARGET_MEAN_DEGREE);
+
+    expect(grey.size).toBeGreaterThan(0);
+    expect(inferred.filter((edge) => grey.has(edge.a) || grey.has(edge.b))).toEqual([]);
+
+    // Kept, not dropped: an authored edge was written by a document author and is real,
+    // and a grey node exists to show that something is known and unmaterialised.
+    const greyAuthored = authored.filter((edge) => grey.has(edge.a) || grey.has(edge.b));
+    expect(greyAuthored.length).toBeGreaterThan(0);
+    expect(new Set(greyAuthored.flatMap((edge) => [edge.a, edge.b])).size).toBeGreaterThan(
+      grey.size,
+    );
+
+    const degreeOf = (id: string) =>
+      [...authored, ...inferred].filter((edge) => edge.a === id || edge.b === id).length;
+    for (const id of grey) expect(degreeOf(id)).toBeGreaterThan(0);
+  });
+
+  it('drops the navigation pages the corpus admitted as concepts (FR-023)', () => {
+    // `index`, `overview` and `patterns` are Azure Architecture Center navigation pages:
+    // admitted through a `related` edge, no material, no `related` list of their own.
+    // `index` is 0.71 similar to `index-table` -- the strongest pair in the corpus and
+    // entirely meaningless -- which is what the similarity of a page title to a concept
+    // name is worth.
+    const vectorOf = (id: string) => all.find((concept) => concept.conceptId === id)!.embedding!;
+    expect(cosineSimilarity(vectorOf('index'), vectorOf('index-table'))).toBeGreaterThan(0.7);
+
+    expect([...NON_CONCEPT_IDS].sort()).toEqual(['index', 'overview', 'patterns']);
+    for (const excluded of NON_CONCEPT_IDS) {
+      expect(all.find((concept) => concept.conceptId === excluded)?.hasCorpus).toBe(false);
+    }
 
     const universe = all.filter((concept) => !NON_CONCEPT_IDS.has(concept.conceptId));
     const { authored, inferred } = assembleEdges(universe, TARGET_MEAN_DEGREE);
-    expect([...authored, ...inferred].map(key).join(' ')).not.toContain('index|');
+    const endpoints = new Set([...authored, ...inferred].flatMap((edge) => [edge.a, edge.b]));
+    for (const excluded of NON_CONCEPT_IDS) expect(endpoints.has(excluded)).toBe(false);
   });
 });

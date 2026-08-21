@@ -114,6 +114,7 @@ export class ConceptGraphService {
       conceptId: concept.conceptId,
       related: concept.related,
       embedding: parseVector(concept.embedding),
+      hasCorpus: concept.hasCorpus,
     }));
     const { authored, inferred, inferredCut } = assembleEdges(forEdges, TARGET_MEAN_DEGREE);
 

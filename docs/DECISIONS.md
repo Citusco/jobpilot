@@ -1458,3 +1458,69 @@ creates and deletes `test-concept-*` rows while Jest runs suites in parallel, so
 against a live concept count is a race against another file. The new tests exclude that prefix
 and, where a count is unavoidable, sandwich the request between two reads. Worth fixing at the
 source later; it is not specific to this feature.
+
+## 2026-08-22 — Measured: grey concept vectors are degenerate, so they do not generate inferred edges
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (US2), measured against the shipped endpoint
+**Supersedes**: item 4 of the 2026-08-22 SCRUM-45 US2 entry above, on `overview` and `patterns`
+
+**The measurement.** Fetching the graph for a live submission and analysing the payload:
+
+```
+inferred edges          240 total
+  grey-to-grey           69   (28.7%)
+  random expectation           8.1%   -> 3.5x over-represented
+highest-degree nodes    auto-scaling 30, caching 24, high-performance-computing 19,
+                        patterns 19, messaging 18   -- five of the top eight were grey
+```
+
+**The cause is structural, not a data slip.** A grey concept has no source material, so its
+vector is built from its name and terms alone. Short generic nouns — `caching`, `messaging`,
+`patterns`, `overview` — therefore embed near one another *because they are short generic
+nouns*, not because the concepts relate. The effect is not a few bad edges; it makes the
+densest region of the point cloud the region with nothing behind it, where every node opens to
+an empty concept. That is the opposite of the property the map exists to have.
+
+**The rule**: inferred edges are computed only between concepts that have material. Grey
+concepts stay in the graph and keep every authored edge — those were written by a document
+author and are real — but they no longer receive edges derived from a degenerate vector.
+Dropping the nodes would be the wrong fix: a grey node exists precisely to show that something
+is known and unmaterialised.
+
+This is FR-010's reasoning applied to edges rather than to matching. The requirement says a
+representation built from a name alone must not be judged against the same threshold as one
+built from real text; it holds identically for what that representation is allowed to assert
+about relatedness.
+
+**Both strategies measured against the real vectors**, choosing the cut by target mean degree
+in each case, with the three navigation pages excluded:
+
+```
+                          cut     inferred   union   mean degree   isolated
+all concepts             0.435       270       334       9.97          0
+material-bearing only    0.401       268       331       9.88          0
+```
+
+Nearly identical density — but in the second, every inferred edge joins two concepts a user can
+actually open. 0.401 is not hardcoded anywhere: the cut is still chosen to hit the target
+degree, and it moved *because* the candidate pool changed. That is the behaviour FR-013 asks
+for, visible in a real measurement.
+
+**`overview` and `patterns` join `index` in the non-concept exclusions.** All three are Azure
+Architecture Center navigation pages of the same class — `addedFrom: related-edge`, no material,
+no `related` edges of their own. The earlier entry left them in because excluding them is a
+corpus admission call and admission is a human decision (CLAUDE.md hard constraint 7); the user
+made that call on 2026-08-22. Node count is 67 as a consequence of the rule, not as a target.
+
+**Shipped shape**, fetched from the running service after both changes: 67 nodes (18 grey), 103
+authored edges, 232 inferred, mean degree 10.0, inferred cut 0.4000, 0 isolated concepts, 0
+grey-to-grey and 0 grey-touching inferred edges, all 18 grey nodes still carrying at least one
+authored edge, 34,460 bytes. The highest-degree nodes are now `asynchronous-request-reply` 25,
+`choreography` 25, `throttling` 24, `bulkhead` 23, `sequential-convoy` 22 — all
+material-bearing.
+
+**This outlives the feature.** Whenever the corpus is expanded, newly admitted concepts arrive
+grey, and their vectors will be degenerate in exactly this way until material is attached. Any
+future use of concept vectors — clustering, gap ranking, recommendation — has to decide what to
+do about that, and "they embed by word shape, not by meaning" is the fact to start from.

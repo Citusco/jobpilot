@@ -206,6 +206,33 @@ describe('GET /jd-submissions/:id/graph (contract)', () => {
       }
     });
 
+    it('infers no edge touching a concept with no material, but keeps its authored ones', async () => {
+      // The same reasoning FR-010 applies to matching, applied to edges: a vector built
+      // from a name alone must not be judged on the footing of one built from real text.
+      // Measured before the rule: 69 of 240 inferred edges joined two grey concepts,
+      // 28.7% against a random expectation of 8.1%, so the densest part of the map was
+      // the part where every node opens to nothing.
+      const body = (await get(submissionId)).body as GraphBody;
+      const grey = new Set(
+        body.nodes.filter((node) => !node.hasCorpus).map((node) => node.conceptId),
+      );
+
+      expect(grey.size).toBeGreaterThan(0);
+      expect(
+        body.edges.filter(
+          (edge) => edge.kind === 'inferred' && (grey.has(edge.a) || grey.has(edge.b)),
+        ),
+      ).toEqual([]);
+
+      // Still nodes, and still connected -- dropping them would hide the fact that the
+      // corpus knows of these concepts and has nothing behind them.
+      for (const id of grey) {
+        const touching = body.edges.filter((edge) => edge.a === id || edge.b === id);
+        expect(touching.length).toBeGreaterThan(0);
+        expect(touching.every((edge) => edge.kind === 'authored')).toBe(true);
+      }
+    });
+
     it('reaches the density target with no concept left unconnected (FR-013)', async () => {
       const body = (await get(submissionId)).body as GraphBody;
 
