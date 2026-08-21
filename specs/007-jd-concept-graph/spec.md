@@ -202,6 +202,22 @@ number, then check that the chosen threshold falls between them.
   number regardless.
 - **FR-019**: Calibration MUST be repeatable on demand, so that it can be re-run whenever the
   underlying representation changes.
+- **FR-019a**: The matching baseline for this feature MUST be built from text belonging to each
+  concept's own source material, asking whether a concept is recognised from its own words. The
+  non-matching baseline MUST use text belonging to a different concept.
+- **FR-019b**: The calibration MUST record which baseline it used, so that a threshold derived
+  from concept-document phrasing is never mistaken for one derived from real-world phrasing. It
+  is a floor: failure here means the representation is inadequate and no wording will help, while
+  success does not establish that the words a person would type will match.
+
+**Persistence**
+
+- **FR-024**: A submission MUST be stored with its original text, the time it was received, and
+  the items extracted from it with their resolution outcomes.
+- **FR-025**: Stored submissions MUST survive the removal of the old pipeline's fields; the
+  identifier remains stable so that later work can reference a submission recorded now.
+- **FR-026**: Storage MUST NOT become a read dependency of this feature. The graph is derivable
+  from a submission's stored items, but nothing here may require a prior submission to exist.
 
 **Removal of the superseded pipeline**
 
@@ -221,11 +237,12 @@ number, then check that the chosen threshold falls between them.
 
 ### Key Entities
 
-- **Submission**: one job description as given, plus the items extracted from it. Its previous
-  fields describing role, stack, seniority and status belonged to the removed pipeline and do not
-  survive. [NEEDS CLARIFICATION: is a submission persisted, or is the pipeline stateless per
-  request? Persistence is required later for the coverage benchmark and the gap queue, but
-  nothing in this feature reads it back.]
+- **Submission**: one job description as given, stored, plus the items extracted from it and
+  when it was received. Its previous fields describing role, stack, seniority and status belonged
+  to the removed pipeline and do not survive. Nothing in this feature reads a submission back;
+  it is stored because the text is user-supplied and not reproducible, and because the coverage
+  benchmark and the gap queue will both need the history that starts accumulating now rather
+  than whenever those are built.
 - **Extracted item**: one technical phrase found in a submission — the surface form, the evidence
   span or spans, and its resolution outcome.
 - **Resolution outcome**: either a concept with the tier that produced it and, for the inferred
@@ -256,6 +273,12 @@ number, then check that the chosen threshold falls between them.
   this role" is a correct outcome, not a failure.
 - **SC-008**: No part of the removed pipeline remains reachable, and everything the new pipeline
   reuses continues to pass its existing tests.
+- **SC-009**: Every submission processed is retrievable afterwards with its text and its items,
+  so that the record needed by later coverage measurement starts accumulating from the first
+  request rather than from whenever that measurement is built.
+- **SC-010**: The calibration states which baseline produced the threshold in force, so that a
+  floor established from concept-document phrasing is never read as evidence about real-world
+  phrasing.
 
 ## Assumptions
 
@@ -273,6 +296,14 @@ number, then check that the chosen threshold falls between them.
 - **The graph is the same for every client**; there is no per-user state.
 - **Concepts known only through references keep weaker representations** in this feature. Giving
   them material is corpus work, not pipeline work.
+- **Submissions are stored from the first request**, though nothing in this feature reads one
+  back. The reasoning is that job-description text is user-supplied and not reproducible, and the
+  submission table is being reshaped here anyway — adding columns now costs nothing, while adding
+  them later means a migration plus reprocessing whatever has accumulated.
+- **The threshold this feature produces is a floor, not a verdict.** It is calibrated from
+  concept-document phrasing, which establishes whether the representation can distinguish
+  concepts at all. Whether real job-description wording reaches the right concept is a separate
+  measurement, gated on postings for roles the corpus covers.
 
 ## Dependencies
 
@@ -280,12 +311,12 @@ number, then check that the chosen threshold falls between them.
   and stored chunks.
 - The inference service must be running, both for extraction and for embedding phrases that the
   exact tier does not match.
-- The threshold cannot be calibrated without a source of test phrases that is independent of the
-  concept records. [NEEDS CLARIFICATION: which source? Job-description phrasings drawn from real
-  postings are uncontaminated but the four collected so far are for roles this corpus does not
-  cover, so they measure coverage rather than matching. Text drawn from each concept's own source
-  document is available immediately and is independent of the term index, but tests whether a
-  concept can find itself rather than whether real-world wording finds it.]
+- The threshold is calibrated in two stages, and only the first is in this feature. Stage one
+  draws its phrases from each concept's own source document, which is independent of the term
+  index that resolution matches against and is available today. Stage two uses phrasings taken
+  from real job postings and is deferred until postings exist for roles this corpus actually
+  covers — the four collected so far are for AI-agent roles it does not, where a low match rate
+  would report corpus coverage while looking like poor matching.
 
 ## Out of Scope
 
