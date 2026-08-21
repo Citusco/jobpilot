@@ -1,6 +1,16 @@
-import { BadGatewayException, BadRequestException, Body, Controller, Post, UnprocessableEntityException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
-import { AgentOrchestrationUnavailableError } from '../agent-orchestration/agent-orchestration.client.js';
+import {
+  AgentOrchestrationUnavailableError,
+  AgentOrchestrationUnreachableError,
+} from '../agent-orchestration/agent-orchestration.client.js';
 import { JdSubmissionsService } from './jd-submissions.service.js';
 import { jdSubmissionRequestSchema } from './schemas/jd-submission-request.schema.js';
 
@@ -8,6 +18,15 @@ import { jdSubmissionRequestSchema } from './schemas/jd-submission-request.schem
 export class JdSubmissionsController {
   constructor(private readonly jdSubmissionsService: JdSubmissionsService) {}
 
+  /**
+   * Submit a job description: extract its technical items, resolve each, store
+   * everything, return the per-item outcome.
+   *
+   * There is no rejection path for a posting with no technical content. It is a 201 with
+   * an empty item list, and a posting the corpus does not cover is a 201 that is entirely
+   * unresolved -- a correct and informative answer, not an error (FR-004, FR-022,
+   * SC-007). The removed pipeline's 422 has no successor.
+   */
   @Post()
   async create(@Body() body: unknown) {
     const parsed = jdSubmissionRequestSchema.safeParse(body);
@@ -18,25 +37,13 @@ export class JdSubmissionsController {
       });
     }
 
-    const result = await this.submitOrFail(parsed.data.text);
-
-    if (result.status === 'rejected') {
-      throw new UnprocessableEntityException({ status: 'rejected', reason: result.reason });
-    }
-
-    return {
-      id: result.id,
-      status: 'accepted',
-      extraction: result.extraction,
-      directions: result.directions,
-      createdAt: result.createdAt,
-    };
-  }
-
-  private async submitOrFail(text: string) {
     try {
-      return await this.jdSubmissionsService.submit(text);
+      return await this.jdSubmissionsService.submit(parsed.data.text);
     } catch (error) {
+      // Order matters: the unreachable error is a subclass of the unavailable one.
+      if (error instanceof AgentOrchestrationUnreachableError) {
+        throw new ServiceUnavailableException({ message: error.message });
+      }
       if (error instanceof AgentOrchestrationUnavailableError) {
         throw new BadGatewayException({ message: error.message });
       }

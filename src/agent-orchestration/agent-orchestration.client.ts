@@ -16,6 +16,22 @@ export class AgentOrchestrationUnavailableError extends Error {
   }
 }
 
+/**
+ * The service could not be reached at all -- connection refused, DNS failure, or a
+ * timeout -- as opposed to reaching it and getting back something unusable.
+ *
+ * A subclass rather than a sibling so every existing `instanceof
+ * AgentOrchestrationUnavailableError` handler keeps working. The distinction exists
+ * because the two cases deserve different statuses at the HTTP edge: 503 for "nothing
+ * answered", 502 for "something answered badly" (contracts/http-api.md).
+ */
+export class AgentOrchestrationUnreachableError extends AgentOrchestrationUnavailableError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'AgentOrchestrationUnreachableError';
+  }
+}
+
 @Injectable()
 export class AgentOrchestrationClient {
   async extract(text: string): Promise<ExtractResponse> {
@@ -32,7 +48,7 @@ export class AgentOrchestrationClient {
         signal: controller.signal,
       });
     } catch (error) {
-      throw new AgentOrchestrationUnavailableError('Failed to reach the agent orchestration service', {
+      throw new AgentOrchestrationUnreachableError('Failed to reach the agent orchestration service', {
         cause: error,
       });
     } finally {
@@ -73,7 +89,7 @@ export class AgentOrchestrationClient {
         signal: controller.signal,
       });
     } catch (error) {
-      throw new AgentOrchestrationUnavailableError('Failed to reach the agent orchestration service', {
+      throw new AgentOrchestrationUnreachableError('Failed to reach the agent orchestration service', {
         cause: error,
       });
     } finally {

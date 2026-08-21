@@ -33,7 +33,7 @@ describe('POST /jd-submissions (contract)', () => {
   let findMany: ReturnType<typeof jest.fn<(args: unknown) => Promise<TermRow[]>>>;
   let create: ReturnType<typeof jest.fn<(args: unknown) => Promise<CreatedSubmission>>>;
 
-  const post = (body: unknown) =>
+  const post = (body: object) =>
     request(app.getHttpServer() as Parameters<typeof request>[0])
       .post('/jd-submissions')
       .send(body);
