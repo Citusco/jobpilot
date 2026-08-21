@@ -172,11 +172,16 @@ describe('against the real 70 concept vectors', () => {
       SELECT concept_id AS "conceptId", embedding::text AS embedding FROM concepts
     `;
     const byId = new Map(vectors.map((row) => [row.conceptId, row.embedding]));
-    all = meta.map((concept) => ({
-      conceptId: concept.conceptId,
-      related: concept.related,
-      embedding: JSON.parse(byId.get(concept.conceptId) ?? 'null') as number[] | null,
-    }));
+    // tests/integration/ingest-corpus creates `test-concept-*` rows and Jest runs suites
+    // in parallel, so anything measured against a live count has to leave them out --
+    // they carry no vector and would show up here as unconnectable concepts.
+    all = meta
+      .filter((concept) => !concept.conceptId.startsWith('test-concept-'))
+      .map((concept) => ({
+        conceptId: concept.conceptId,
+        related: concept.related,
+        embedding: JSON.parse(byId.get(concept.conceptId) ?? 'null') as number[] | null,
+      }));
   });
 
   afterAll(async () => {
@@ -191,9 +196,19 @@ describe('against the real 70 concept vectors', () => {
     const { authored } = assembleEdges(all, 0);
     expect(authored).toHaveLength(107);
 
-    const dense = assembleEdges(all, 70).inferred.filter((edge) => edge.strength >= 0.44);
-    expect(dense).toHaveLength(239);
-    expect((2 * (dense.length + authored.length)) / 70).toBeCloseTo(9.886, 3);
+    // Raw cosine, not the rounded `strength` the response carries: the measurement was
+    // taken on unrounded values, and at four decimals a pair sitting on 0.43995 crosses
+    // the line and turns 239 into 240.
+    const authoredKeys = new Set(authored.map(key));
+    let dense = 0;
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        if (authoredKeys.has([all[i].conceptId, all[j].conceptId].sort().join('|'))) continue;
+        if (cosineSimilarity(all[i].embedding!, all[j].embedding!) >= 0.44) dense++;
+      }
+    }
+    expect(dense).toBe(239);
+    expect((2 * (dense + authored.length)) / 70).toBeCloseTo(9.886, 3);
   });
 
   it('hits the density target on the graph universe, with nothing left unconnected', () => {

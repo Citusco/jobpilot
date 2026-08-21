@@ -1390,3 +1390,71 @@ corpus **does** hold under a different name: `publish/subscribe model` against `
 `strangler fig migration` against `strangler-fig`. That second group is precisely the population
 tier 2 exists to recover, and it is now visible as a measurement rather than an argument.
 **Status**: active
+
+## 2026-08-22 — Implementation decisions settled while building SCRUM-45 US2 (the graph endpoint)
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph, tasks T012–T016
+
+Six things the spec, plan and contract did not settle, or settled wrongly.
+
+**1. Relevance is the strongest single item that resolved to a concept, and it does not
+propagate along edges.** An `exact` item contributes 1 — it is a recorded name, not a
+measurement — and a `similarity` item contributes its score; a concept nothing resolved to is
+0 (FR-011). Two decisions are folded into that. Repetition does not raise relevance, because
+counting mentions would make a posting's repetitiveness look like emphasis. And relevance is
+not diffused to neighbours, because the diffusion rate would be a number nobody has measured,
+arriving in a response field that looks measured. The edges are already in the payload; a
+client that wants neighbourhood weighting can compute it and own the choice.
+
+**2. The inferred cut is a target mean degree of 10, not a similarity value.** FR-013 requires
+this and the distribution explains why: concept-pair similarity across the 70 real vectors is
+narrow — p5 0.248, p50 0.351, p95 0.484 — so a fixed cut sits inside the bulk, where a small
+change in how vectors are built moves the edge count enormously. Edges are taken in descending
+similarity until the target is reached, authored edges counting towards it, then any concept
+still unconnected is given its single best remaining edge. On today's corpus the target lands
+on 0.4384, close to the 0.44 measured by hand — but as an outcome, not an input.
+
+**3. A pair that is both asserted and similar is reported once, as authored.** FR-012 forbids
+merging the two kinds; it does not say what to do when both apply. Authored wins because a
+document asserting a relationship is the stronger claim, and emitting the pair twice would
+inflate the density and leave a client unable to say what it is looking at.
+
+**4. `index` is excluded from the graph; `overview` and `patterns` are not.** `index` is an
+Azure Architecture Center navigation page admitted through a `related` edge from `microservices`
+and `throttling`. It has no material, and its vector — built from the word "index" alone — is
+0.7135 similar to `index-table`, the single strongest pair in the corpus and completely
+meaningless. FR-023 already calls for it to go, so `src/corpus/non-concept-ids.ts` excludes it
+where the graph is derived. `overview` and `patterns` are the same kind of page and are
+deliberately left in: excluding them would be a corpus admission call, and admission is a human
+decision, not an engineering operation (CLAUDE.md hard constraint 7). The durable fix is an
+exclusion rule in corpus admission; the graph-side list is the interim, and node count is 69
+rather than the 70 tasks.md assumes.
+
+**5. `threshold` is null, not a placeholder.** contracts/http-api.md shows the field populated,
+but the calibration that produces it is US3 and has not run. A number there would be read as a
+measurement — the exact failure FR-018 and FR-019b exist to prevent — so the field says there
+is nothing to echo. `stats.inferredCut` was added alongside it: the graph's own cut is a
+different quantity from the resolution threshold and hiding it would make the density
+unauditable from the response.
+
+**6. The response is about 35 KB, not the 12.4 KB the plan recorded.** 12.4 KB is roughly what
+the node ids and edge pairs alone come to. The response contracts/http-api.md specifies also
+carries a name, a corpus flag, a relevance and a matched-item list per node, and `kind` plus
+`strength` on each of ~345 edges — around 83 bytes an edge. Inferred `strength` is rounded to
+four decimals, as the contract's own examples write it, which saves about 3 KB of float noise.
+The conclusion the 12.4 KB figure supported still holds — one response, no pagination, no
+subgraph parameter — so the tests assert the measured size rather than the planned one.
+
+**Measured end to end** on 2026-08-22 against the running service and the real corpus, a
+five-item posting fetched through `GET /jd-submissions/:id/graph`: 69 nodes (20 of them grey),
+105 authored edges, 240 inferred, mean degree 10.0, inferred cut 0.4384, 0 isolated concepts,
+35,543 bytes. `rate limiting` resolved to `rate-limiting` at tier 1 and `throttling` sits one
+authored edge away from it — the neighbour the colloquial phrase probably meant, surfaced by
+the graph rather than by overriding an exact match.
+
+**A test-isolation hazard surfaced, not introduced.** `tests/integration/ingest-corpus.test.ts`
+creates and deletes `test-concept-*` rows while Jest runs suites in parallel, so any assertion
+against a live concept count is a race against another file. The new tests exclude that prefix
+and, where a count is unavoidable, sandwich the request between two reads. Worth fixing at the
+source later; it is not specific to this feature.

@@ -52,6 +52,13 @@ describe('GET /jd-submissions/:id/graph (contract)', () => {
   let submissionId: string;
   let conceptCount: number;
 
+  const conceptIds = async () =>
+    new Set(
+      (await prisma.concept.findMany({ select: { conceptId: true } })).map(
+        (concept) => concept.conceptId,
+      ),
+    );
+
   const get = (id: string) =>
     request(app.getHttpServer() as Parameters<typeof request>[0]).get(`/jd-submissions/${id}/graph`);
 
@@ -109,21 +116,36 @@ describe('GET /jd-submissions/:id/graph (contract)', () => {
     it('carries every concept the corpus holds, minus the entries that are not concepts', () => {
       // FR-011 is "every concept", and FR-023 says a navigation page admitted through a
       // `related` edge is not one. 70 rows, one of which is `index`.
-      expect(conceptCount).toBe(70);
+      //
+      // Greater-or-equal rather than exactly 70 because tests/integration/ingest-corpus
+      // creates and deletes concept fixtures, and Jest runs suites in parallel: an exact
+      // count here is a race against another file, not a claim about the corpus.
+      expect(conceptCount).toBeGreaterThanOrEqual(70);
     });
 
     it('returns them all in one response, sorted, with no pagination', async () => {
+      // Sandwich the request between two reads so the transient fixtures another suite
+      // may be creating cannot make this flaky: the node set must contain everything
+      // that existed throughout, and nothing that existed at neither end.
+      const idsBefore = await conceptIds();
       const response = await get(submissionId);
+      const idsAfter = await conceptIds();
       const body = response.body as GraphBody;
+      const nodeIds = body.nodes.map((node) => node.conceptId);
 
       expect(response.status).toBe(200);
       expect(body.submissionId).toBe(submissionId);
-      expect(body.nodes).toHaveLength(conceptCount - NON_CONCEPT_IDS.size);
-      expect(body.nodes.map((node) => node.conceptId)).toEqual(
-        [...body.nodes.map((node) => node.conceptId)].sort(),
-      );
-      for (const excluded of NON_CONCEPT_IDS) {
-        expect(body.nodes.map((node) => node.conceptId)).not.toContain(excluded);
+      expect(nodeIds).toEqual([...nodeIds].sort());
+      expect(new Set(nodeIds).size).toBe(nodeIds.length);
+
+      const throughout = [...idsBefore].filter((id) => idsAfter.has(id));
+      expect(throughout.length).toBeGreaterThanOrEqual(70);
+      for (const id of throughout) {
+        if (NON_CONCEPT_IDS.has(id)) expect(nodeIds).not.toContain(id);
+        else expect(nodeIds).toContain(id);
+      }
+      for (const id of nodeIds) {
+        expect(idsBefore.has(id) || idsAfter.has(id)).toBe(true);
       }
     });
 
@@ -194,7 +216,15 @@ describe('GET /jd-submissions/:id/graph (contract)', () => {
       }
 
       expect(body.stats.meanDegree).toBeCloseTo(10, 1);
-      expect([...degree.entries()].filter(([, count]) => count === 0)).toEqual([]);
+      // `test-concept-*` rows belong to tests/integration/ingest-corpus, which runs in
+      // parallel and creates them without a vector. One of those is legitimately
+      // unconnectable; the claim here is about the corpus, not about another suite's
+      // fixtures happening to overlap this request.
+      expect(
+        [...degree.entries()].filter(
+          ([id, count]) => count === 0 && !id.startsWith('test-concept-'),
+        ),
+      ).toEqual([]);
       // Both endpoints of every edge are nodes, or a client cannot draw it.
       expect(degree.size).toBe(body.nodes.length);
     });

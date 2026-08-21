@@ -100,7 +100,15 @@ export function assembleEdges(
       const vb = vectors.get(ids[j]);
       if (!vb) continue;
       if (authoredKeys.has(pairKey(ids[i], ids[j]))) continue;
-      candidates.push({ a: ids[i], b: ids[j], kind: 'inferred', strength: cosineSimilarity(va, vb) });
+      candidates.push({
+        a: ids[i],
+        b: ids[j],
+        kind: 'inferred',
+        // Four decimals, as contracts/http-api.md writes them. A cosine similarity is a
+        // rendering weight here, and serialising seventeen significant figures of it
+        // would add roughly 5 KB of noise to every response.
+        strength: round4(cosineSimilarity(va, vb)),
+      });
     }
   }
   candidates.sort(
@@ -140,6 +148,10 @@ export function assembleEdges(
     inferred: chosen.sort((x, y) => x.a.localeCompare(y.a) || x.b.localeCompare(y.b)),
     inferredCut,
   };
+}
+
+function round4(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
 }
 
 /** Undirected identity for a pair: the two ids in a fixed order. */
