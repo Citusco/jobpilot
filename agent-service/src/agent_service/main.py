@@ -11,14 +11,11 @@ from agent_service.embeddings import (
 from agent_service.graph import build_graph
 from agent_service.nodes import AgentLLMError
 from agent_service.schemas import (
-    CandidateDirection,
     EmbedRequest,
     EmbedResponse,
-    ExtractInsufficient,
-    Extraction,
+    ExtractedItem,
     ExtractRequest,
     ExtractResponse,
-    ExtractSufficient,
 )
 from agent_service.secrets import SecretLoadError, load_secrets_into_env
 
@@ -49,30 +46,22 @@ def get_graph() -> Any:
 
 @app.post("/extract", response_model=ExtractResponse)
 def extract(request: ExtractRequest, graph: Any = Depends(get_graph)) -> ExtractResponse:
+    """Report the technical items a posting mentions.
+
+    No sufficiency verdict and no rejection branch: a posting with nothing technical
+    yields {"items": []} (FR-004). This service does not resolve, score, classify or rank
+    -- it does not know what a concept is and has no database access (DESIGN.md 4.1).
+    """
     try:
         state: dict[str, Any] = graph.invoke({"jd_text": request.text})
     except AgentLLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    if not state["sufficient"]:
-        return ExtractInsufficient(reason=state["insufficient_reason"])
-
-    return ExtractSufficient(
-        extraction=Extraction(
-            role=state["role"],
-            tech_stack=state["tech_stack"],
-            seniority=state["seniority"],
-            seniority_inferred=state["seniority_inferred"],
-        ),
-        directions=[
-            CandidateDirection(
-                name=d.name,
-                rationale=d.rationale,
-                tags=d.tags,
-                suggested_question_count=d.suggested_question_count,
-            )
-            for d in state["directions"]
-        ],
+    return ExtractResponse(
+        items=[
+            ExtractedItem(surface=item.surface, evidence=item.evidence)
+            for item in state["items"]
+        ]
     )
 
 

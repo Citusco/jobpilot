@@ -3,75 +3,54 @@
 Three distinct layers, kept deliberately separate (see
 specs/004-python-agent-orchestration/research.md #3 and the architecture plan):
 
-1. LLM output schemas (``ExtractionLLMOutput``, ``DirectionsLLMOutput``) - targets for
-   ``with_structured_output``. Snake_case only, never serialized with a different casing,
-   so no aliasing complexity needed here.
+1. LLM output schemas (``ItemsLLMOutput``) - targets for ``with_structured_output``.
+   Snake_case only, never serialized with a different casing, so no aliasing complexity
+   needed here.
 2. ``GraphState`` - the LangGraph state schema. Kept flat, snake_case, no nested aliased
    models and no aliases of its own, specifically to avoid the documented
    LangGraph+Pydantic footguns around generics/aliases in state schemas.
-3. HTTP request/response schemas (``ExtractRequest``, ``ExtractSufficient``,
-   ``ExtractInsufficient``) - these DO use aliases, to match the camelCase contract at
-   specs/003-jd-extraction-nestjs-integration/contracts/agent-orchestration.yaml exactly.
-   They are constructed explicitly from ``GraphState`` in main.py, never handed to
-   LangGraph, so the footgun above does not apply to them.
+3. HTTP request/response schemas (``ExtractRequest``, ``ExtractResponse``) - constructed
+   explicitly from ``GraphState`` in main.py, never handed to LangGraph.
+
+The training-directions models this file used to carry (``ExtractionLLMOutput``,
+``DirectionsLLMOutput``, ``Extraction``, ``CandidateDirection``, ``ExtractSufficient``,
+``ExtractInsufficient``) are gone with the pipeline they served - FR-020. Nothing here
+carries a sufficiency verdict any more: absence is an empty item list, per item, never a
+judgment about the whole submission (FR-004, FR-022).
 """
 
 from __future__ import annotations
 
-from typing import Literal, Self
+from pydantic import BaseModel, Field, field_validator
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+# Contract bounds (specs/007-jd-concept-graph/contracts/extract.md), not provider limits.
+_MAX_ITEMS = 200
+_MAX_EVIDENCE_SPANS = 10
 
 # --- 1. LLM output schemas (with_structured_output targets) ---
 
 
-class ExtractionLLMOutput(BaseModel):
-    """Target schema for the extract_jd_structure node's LLM call."""
+class ExtractedItemLLM(BaseModel):
+    """One technical phrase the posting mentions, with the text that justifies it.
 
-    sufficient: bool
-    role: str | None = None
-    tech_stack: list[str] | None = None
-    seniority: str | None = None
-    seniority_inferred: bool | None = None
-    insufficient_reason: str | None = None
+    ``surface`` is the phrase as the posting wrote it: not normalised, not expanded, not
+    corrected. Normalisation belongs to the caller, which owns the single normalizeTerm
+    implementation -- a second one here would drift and produce lookups that silently
+    return nothing (docs/DECISIONS.md, 2026-08-10 concept_terms entry).
+    """
 
-    @model_validator(mode="after")
-    def _consistent_with_sufficiency(self) -> Self:
-        # Guards against an LLM response whose fields are inconsistent with its own
-        # `sufficient` flag - without this, either direction reaches main.py as a state
-        # dict that fails to construct the corresponding response model
-        # (Extraction requires role/tech_stack/seniority/seniority_inferred;
-        # ExtractInsufficient requires reason), raising an uncaught
-        # pydantic.ValidationError (a raw 500) instead of the intended
-        # AgentLLMError -> 502 path. Runs both when LangChain first parses the LLM's
-        # JSON into this model, and again in nodes.py's explicit re-validation step -
-        # defense in depth, not redundant (research.md #3).
-        if self.sufficient and (
-            self.role is None
-            or self.tech_stack is None
-            or self.seniority is None
-            or self.seniority_inferred is None
-        ):
-            raise ValueError(
-                "sufficient=True requires role, tech_stack, seniority, and "
-                "seniority_inferred to all be set"
-            )
-        if not self.sufficient and self.insufficient_reason is None:
-            raise ValueError("sufficient=False requires insufficient_reason to be set")
-        return self
+    surface: str = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1, max_length=_MAX_EVIDENCE_SPANS)
 
 
-class DirectionLLMItem(BaseModel):
-    name: str
-    rationale: str
-    tags: list[str] = Field(min_length=1)
-    suggested_question_count: int = Field(gt=0)
+class ItemsLLMOutput(BaseModel):
+    """Target schema for the extract_items node's LLM call.
 
+    An empty list is valid and is the correct answer for a posting with no technical
+    content.
+    """
 
-class DirectionsLLMOutput(BaseModel):
-    """Target schema for the generate_candidate_directions node's LLM call."""
-
-    directions: list[DirectionLLMItem] = Field(max_length=6)
+    items: list[ExtractedItemLLM] = Field(default_factory=list, max_length=_MAX_ITEMS)
 
 
 # --- 2. LangGraph state (flat, snake_case, no aliases) ---
@@ -79,54 +58,23 @@ class DirectionsLLMOutput(BaseModel):
 
 class GraphState(BaseModel):
     jd_text: str
-    sufficient: bool | None = None
-    insufficient_reason: str | None = None
-    role: str | None = None
-    tech_stack: list[str] | None = None
-    seniority: str | None = None
-    seniority_inferred: bool | None = None
-    directions: list[DirectionLLMItem] = Field(default_factory=list)
+    items: list[ExtractedItemLLM] = Field(default_factory=list)
 
 
-# --- 3. HTTP request/response schemas (aliased to match the camelCase contract) ---
+# --- 3. HTTP request/response schemas ---
 
 
 class ExtractRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
-class Extraction(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    role: str
-    tech_stack: list[str] = Field(alias="techStack")
-    seniority: str
-    seniority_inferred: bool = Field(alias="seniorityInferred")
+class ExtractedItem(BaseModel):
+    surface: str
+    evidence: list[str]
 
 
-class CandidateDirection(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    name: str
-    rationale: str
-    tags: list[str] = Field(min_length=1)
-    suggested_question_count: int = Field(alias="suggestedQuestionCount", gt=0)
-
-
-class ExtractSufficient(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    sufficient: Literal[True] = True
-    extraction: Extraction
-    directions: list[CandidateDirection] = Field(max_length=6)
-
-
-class ExtractInsufficient(BaseModel):
-    sufficient: Literal[False] = False
-    reason: str
-
-
-ExtractResponse = ExtractSufficient | ExtractInsufficient
+class ExtractResponse(BaseModel):
+    items: list[ExtractedItem]
 
 
 # --- /embed (specs/006-corpus-structure-rebuild/contracts/embed.md) ---
