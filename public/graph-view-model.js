@@ -1,15 +1,15 @@
 /**
- * Turns the two API responses into the shape the map draws from.
+ * Turns the graph response into the shape the map draws from.
  *
  * This is the only part of the client with anything to get wrong, so it is a module the
  * page imports rather than script inside it: a browser needs it as plain JavaScript, and
  * a test needs it without a DOM. The hand-written `graph-view-model.d.ts` beside it is
  * what the TypeScript test and `tsc --noEmit` read.
  *
- * The graph endpoint deliberately carries no unresolved items -- it is a map of concepts,
- * and an unresolved item resolved to no concept. They come from the submission response
- * instead, and the two are joined here, because a map without them is identical for every
- * posting the corpus does not cover.
+ * The graph is now the posting's rather than the corpus's, and it carries the posting's
+ * own items with it -- so the unresolved list no longer has to be joined in from a
+ * `POST` response the browser may no longer be holding. The submission response is still
+ * accepted, for the item-count summary alone.
  */
 
 /**
@@ -20,12 +20,15 @@
 export function buildViewModel(graph, submission) {
   const byId = new Map();
   for (const node of graph.nodes) {
-    byId.set(node.conceptId, {
+    byId.set(node.id, {
+      id: node.id,
       conceptId: node.conceptId,
       name: node.name,
+      layer: node.layer,
       hasCorpus: node.hasCorpus,
       relevance: node.relevance,
       matchedItems: node.matchedItems,
+      evidence: node.evidence,
       authoredDegree: 0,
       inferredDegree: 0,
       degree: 0,
@@ -38,10 +41,10 @@ export function buildViewModel(graph, submission) {
   const inferredEdges = [];
 
   for (const edge of graph.edges) {
-    // An edge naming a concept the node list does not carry cannot be drawn. The graph
-    // service filters non-concept ids out of both, so this should never fire; dropping
-    // the edge rather than inventing a node keeps a backend change from silently
-    // producing a node with no name and no corpus flag.
+    // An edge naming a node the list does not carry cannot be drawn. The graph service
+    // filters both sides consistently, so this should never fire; dropping the edge
+    // rather than inventing a node keeps a backend change from producing a point with no
+    // name and no layer.
     if (!byId.has(edge.a) || !byId.has(edge.b)) continue;
 
     (edge.kind === 'authored' ? authoredEdges : inferredEdges).push(edge);
@@ -65,7 +68,7 @@ export function buildViewModel(graph, submission) {
   }
 
   const nodes = [...byId.values()];
-  const matched = nodes.filter((node) => node.relevance > 0);
+  const inLayer = (layer) => nodes.filter((node) => node.layer === layer);
 
   return {
     submissionId: graph.submissionId,
@@ -73,54 +76,24 @@ export function buildViewModel(graph, submission) {
     authoredEdges,
     inferredEdges,
     adjacency,
-    matchedCount: matched.length,
-    // Every node at relevance 0 is the common case, not a failure, and the page says so
-    // in words rather than showing a uniformly grey map with no explanation.
-    allUnmatched: matched.length === 0,
-    withoutCorpusCount: nodes.filter((node) => !node.hasCorpus).length,
-    unresolved: collectUnresolved(submission),
-    unresolvedAvailable: submission !== null,
+    resolved: inLayer('named-resolved'),
+    // Ordered concepts-first, then the phrases nothing in the corpus knows at all. A
+    // concept the corpus names but cannot speak to is a different kind of gap from a
+    // product name, and the list reads better when the two are not interleaved.
+    unanswered: inLayer('named-unanswered').sort(
+      (a, b) => Number(a.conceptId === null) - Number(b.conceptId === null),
+    ),
+    adjacent: inLayer('adjacent'),
+    // A posting with nothing recognisable at all: not a failure, but it needs saying in
+    // words, because an empty canvas otherwise reads as a broken page.
+    emptyMap: nodes.length === 0,
+    // Nothing the posting named has material behind it. The map is then entirely hollow
+    // points, which is a real answer about this corpus and this role.
+    nothingAnswered: inLayer('named-resolved').length === 0,
     summary: submission === null ? null : submission.summary,
     stats: graph.stats,
     thresholdLabel: describeThreshold(graph.threshold),
   };
-}
-
-/**
- * The unresolved items, deduplicated by surface form and ordered by first appearance.
- *
- * Two extracted spans can produce the same surface with different casing; they are the
- * same gap and are listed once, keeping the first casing seen rather than lowercasing,
- * since the surface is the posting's own wording.
- *
- * @param {import('./graph-view-model.js').SubmissionResult | null} submission
- * @returns {import('./graph-view-model.js').UnresolvedItem[]}
- */
-export function collectUnresolved(submission) {
-  if (submission === null) return [];
-  /** @type {Map<string, import('./graph-view-model.js').UnresolvedItem>} */
-  const bySurface = new Map();
-  for (const item of submission.items) {
-    if (item.tier !== 'unresolved') continue;
-    const key = item.surface.trim().toLowerCase();
-    if (key === '') continue;
-    const existing = bySurface.get(key);
-    if (existing === undefined) {
-      bySurface.set(key, {
-        surface: item.surface.trim(),
-        score: item.score,
-        evidence: [...new Set(item.evidence)],
-      });
-      continue;
-    }
-    for (const span of item.evidence) {
-      if (!existing.evidence.includes(span)) existing.evidence.push(span);
-    }
-    if (existing.score === null || (item.score !== null && item.score > existing.score)) {
-      existing.score = item.score;
-    }
-  }
-  return [...bySurface.values()];
 }
 
 /**
@@ -141,25 +114,29 @@ export function describeThreshold(threshold) {
 }
 
 /**
- * The neighbours of one concept, authored first and then by descending strength, so a
+ * The neighbours of one node, authored first and then by descending strength, so a
  * selected node's panel leads with the links a document asserted.
  *
  * @param {import('./graph-view-model.js').GraphViewModel} viewModel
- * @param {string} conceptId
+ * @param {string} nodeId
  * @returns {import('./graph-view-model.js').Neighbour[]}
  */
-export function neighboursOf(viewModel, conceptId) {
-  const entries = viewModel.adjacency.get(conceptId) ?? [];
+export function neighboursOf(viewModel, nodeId) {
+  const entries = viewModel.adjacency.get(nodeId) ?? [];
   return [...entries]
-    .map((entry) => ({
-      conceptId: entry.other,
-      name: viewModel.nodes.find((node) => node.conceptId === entry.other)?.name ?? entry.other,
-      kind: entry.kind,
-      strength: entry.strength,
-    }))
+    .map((entry) => {
+      const node = viewModel.nodes.find((candidate) => candidate.id === entry.other);
+      return {
+        id: entry.other,
+        name: node?.name ?? entry.other,
+        layer: node?.layer ?? 'adjacent',
+        kind: entry.kind,
+        strength: entry.strength,
+      };
+    })
     .sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'authored' ? -1 : 1;
       if (b.strength !== a.strength) return b.strength - a.strength;
-      return a.conceptId.localeCompare(b.conceptId);
+      return a.id.localeCompare(b.id);
     });
 }

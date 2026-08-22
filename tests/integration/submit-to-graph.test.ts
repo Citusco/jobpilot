@@ -36,14 +36,29 @@ const EXTRACTED: ExtractResponse = {
 interface GraphBody {
   submissionId: string;
   threshold: unknown;
-  nodes: { conceptId: string; relevance: number; matchedItems: string[]; hasCorpus: boolean }[];
+  nodes: {
+    id: string;
+    conceptId: string | null;
+    name: string;
+    layer: 'named-resolved' | 'named-unanswered' | 'adjacent';
+    relevance: number;
+    matchedItems: string[];
+    hasCorpus: boolean;
+    evidence: string[];
+  }[];
   edges: { a: string; b: string; kind: 'authored' | 'inferred'; strength: number }[];
+  items: { surface: string; conceptId: string | null; tier: string; evidence: string[] }[];
   stats: {
     nodes: number;
     authoredEdges: number;
     inferredEdges: number;
     meanDegree: number;
     inferredCut: number | null;
+    namedResolved: number;
+    namedUnanswered: number;
+    adjacent: number;
+    offMap: number;
+    corpusConcepts: number;
   };
 }
 
@@ -293,66 +308,98 @@ describe('submit a posting through to stored items (integration)', () => {
   });
 
   describe('posting in, graph out', () => {
-    it('turns the posting into a complete map, matched few and unmatched many alike', async () => {
+    it('draws the posting, not the corpus', async () => {
       const submission = await submit(JD_TEXT);
       const response = await graphOf(submission.body.submissionId as string);
       const body = response.body as GraphBody;
 
       expect(response.status).toBe(200);
-      const matched = body.nodes.filter((node) => node.matchedItems.length > 0);
-      expect(matched.map((node) => node.conceptId).sort()).toEqual([
+      const named = body.nodes.filter((node) => node.layer !== 'adjacent');
+      expect(named.map((node) => node.id).sort()).toEqual([
         'circuit-breaker',
+        'item:kubernetes',
         'rate-limiting',
         'throttling',
       ]);
-      expect(matched.every((node) => node.relevance === 1)).toBe(true);
-      // Kubernetes resolved to nothing, so it is on no node. The unmatched concepts are
-      // the majority of the map and are the informative part of it.
-      expect(body.nodes.filter((node) => node.relevance === 0).length).toBe(
-        body.nodes.length - matched.length,
-      );
+      // The corpus is far larger than this, and the map now says so in `stats` rather
+      // than by drawing all of it.
+      expect(body.stats.corpusConcepts).toBeGreaterThanOrEqual(67);
+      expect(body.stats.offMap).toBeGreaterThan(0);
+      expect(body.stats.nodes).toBeLessThan(body.stats.corpusConcepts);
     });
 
-    it('fits in one response of roughly the measured size', async () => {
-      const submission = await submit(JD_TEXT);
-      const response = await graphOf(submission.body.submissionId as string);
-
-      // The plan recorded 12.4 KB for "the whole graph serialised". The response as
-      // contracts/http-api.md specifies it measures about 35 KB, and the difference is
-      // the contract rather than the graph: 12.4 KB is roughly what the node ids and
-      // edge pairs alone come to, while the response also carries a name, a corpus flag,
-      // a relevance and a matched-item list per node, and `kind` plus `strength` on each
-      // of ~345 edges. That is around 83 bytes an edge, all of it required.
-      //
-      // The conclusion the figure supported still holds -- one response, no pagination,
-      // no subgraph parameter -- so the bound here is the measured size rather than the
-      // planned one. What it guards is that nobody quietly adds per-node payload.
-      const bytes = Buffer.byteLength(JSON.stringify(response.body), 'utf8');
-      expect(bytes).toBeGreaterThan(25_000);
-      expect(bytes).toBeLessThan(45_000);
-    });
-
-    it('holds the density target on the real corpus (FR-013)', async () => {
+    it('puts Kubernetes on the map as an isolated point rather than in a side list', async () => {
+      // It is a product name, so it must never become a concept and must never be
+      // resolved to something nearby. It is still what the posting asked for, so it is
+      // still on the map -- hollow, with no edges.
       const submission = await submit(JD_TEXT);
       const body = (await graphOf(submission.body.submissionId as string)).body as GraphBody;
 
-      const degree = new Map(body.nodes.map((node) => [node.conceptId, 0]));
-      for (const edge of body.edges) {
-        degree.set(edge.a, (degree.get(edge.a) ?? 0) + 1);
-        degree.set(edge.b, (degree.get(edge.b) ?? 0) + 1);
-      }
+      const node = body.nodes.find((n) => n.id === 'item:kubernetes');
+      expect(node).toMatchObject({
+        conceptId: null,
+        name: 'Kubernetes',
+        layer: 'named-unanswered',
+        hasCorpus: false,
+        evidence: ['run Kubernetes in production.'],
+      });
+      expect(body.edges.filter((e) => e.a === node!.id || e.b === node!.id)).toEqual([]);
+    });
 
-      expect(body.stats.meanDegree).toBeCloseTo(10, 1);
-      // `test-concept-*` rows belong to tests/integration/ingest-corpus, which runs in
-      // parallel and creates them without a vector; one of those is legitimately
-      // unconnectable and says nothing about the corpus.
-      expect(
-        [...degree.entries()].filter(
-          ([id, count]) => count === 0 && !id.startsWith('test-concept-'),
-        ),
-      ).toEqual([]);
-      expect(body.stats.authoredEdges).toBeGreaterThan(0);
-      expect(body.stats.inferredEdges).toBeGreaterThan(body.stats.authoredEdges);
+    it('carries the extracted item list, so a stored graph needs nothing else', async () => {
+      // Until now the unresolved items lived only in the POST response, and reopening a
+      // graph by id lost them -- the one thing the map is actually about.
+      const submission = await submit(JD_TEXT);
+      const body = (await graphOf(submission.body.submissionId as string)).body as GraphBody;
+
+      expect(body.items.map((item) => [item.surface, item.tier])).toEqual([
+        ['Circuit Breaker', 'exact'],
+        ['Kubernetes', 'unresolved'],
+        ['rate limiting', 'exact'],
+        ['Throttling', 'exact'],
+      ]);
+    });
+
+    it('gives a posting the corpus does not cover a map of its own, not the same one', async () => {
+      // The measured failure this replaces: an uncovered posting produced an identical
+      // 67-node map every time, carrying no information about the submission.
+      extract.mockResolvedValue({
+        items: [
+          { surface: 'Kubernetes', evidence: ['run Kubernetes in production.'] },
+          { surface: 'Terraform', evidence: ['run Kubernetes in production.'] },
+        ],
+      });
+      const uncovered = await submit(JD_TEXT);
+      const body = (await graphOf(uncovered.body.submissionId as string)).body as GraphBody;
+
+      expect(body.nodes.map((node) => node.id)).toEqual(['item:kubernetes', 'item:terraform']);
+      expect(body.edges).toEqual([]);
+      expect(body.stats).toMatchObject({ namedResolved: 0, namedUnanswered: 2, adjacent: 0 });
+    });
+
+    it('is much smaller than the whole-corpus response it replaces', async () => {
+      // The corpus map measured 34.5 KB. A posting's map is a fraction of it, which is
+      // the point: the response is the submission, not the library.
+      const submission = await submit(JD_TEXT);
+      const response = await graphOf(submission.body.submissionId as string);
+
+      const bytes = Buffer.byteLength(JSON.stringify(response.body), 'utf8');
+      expect(bytes).toBeGreaterThan(1_000);
+      expect(bytes).toBeLessThan(20_000);
+    });
+
+    it('keeps the adjacent layer to one hop, and every edge touching something named', async () => {
+      const submission = await submit(JD_TEXT);
+      const body = (await graphOf(submission.body.submissionId as string)).body as GraphBody;
+
+      const named = new Set(
+        body.nodes.filter((node) => node.layer !== 'adjacent').map((node) => node.id),
+      );
+      expect(body.edges.length).toBeGreaterThan(0);
+      for (const edge of body.edges) {
+        expect(named.has(edge.a) || named.has(edge.b)).toBe(true);
+      }
+      expect(body.stats.authoredEdges + body.stats.inferredEdges).toBe(body.edges.length);
     });
 
     it('puts throttling one edge from the rate-limiting the phrase resolved to', async () => {
@@ -382,9 +429,13 @@ describe('submit a posting through to stored items (integration)', () => {
       const second = await submit(JD_TEXT);
       const other = (await graphOf(second.body.submissionId as string)).body as GraphBody;
 
-      // Same corpus, so the same nodes and the same edges -- only relevance moves.
-      expect(other.stats).toEqual(((await graphOf(id)).body as GraphBody).stats);
-      expect(other.nodes.every((node) => node.relevance === 0)).toBe(true);
+      // Different posting, different map. That is now the expected outcome, where
+      // before the two submissions produced byte-identical node and edge lists.
+      const original = (await graphOf(id)).body as GraphBody;
+      expect(other.nodes.map((node) => node.id)).not.toEqual(
+        original.nodes.map((node) => node.id),
+      );
+      expect(other.nodes.map((node) => node.id)).toEqual(['item:kubernetes']);
     });
   });
 });

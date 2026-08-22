@@ -302,6 +302,21 @@
       .tag-authored { color: var(--authored); }
       .tag-inferred { color: var(--ink-faint); }
 
+      .tag-known {
+        color: var(--ink-faint);
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .evidence-open {
+        color: var(--ink-dim);
+        font-size: 11.5px;
+        border-left: 2px solid var(--line);
+        padding-left: 8px;
+        margin: 4px 0 8px;
+      }
+
       .empty { color: var(--ink-faint); font-size: 12.5px; }
       code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--ink-dim); }
     </style>
@@ -319,10 +334,11 @@
       <div class="card">
         <h2>Job description</h2>
         <p>
-          Every concept in the corpus is drawn, whether the posting mentioned it or not.
-          Most real postings resolve almost nothing — that is the expected result, and the
-          things the posting asked for that the corpus cannot answer are listed beside the
-          map.
+          The map is the posting's, not the corpus's. What it named and the corpus can
+          answer is drawn solid; what it named and nothing answers is drawn hollow and
+          unconnected; and one hop out from the first sits dimmer still — what the role
+          implies but the posting did not spell out. How much of the corpus the posting
+          never touched is reported as a count beside the map.
         </p>
         <textarea id="text" spellcheck="false" placeholder="Paste the posting here…"></textarea>
         <div class="row">
@@ -411,10 +427,9 @@
        *
        * The graph endpoint is a database read, while submitting re-runs extraction --
        * seconds of LLM work that also sometimes fails. Being able to come back to a map
-       * without paying for it again is worth the one caveat this carries: the graph
-       * endpoint has no unresolved items, so on a cold browser the gap list is missing,
-       * and the sidebar says so rather than showing an empty list. Within a browser
-       * session it survives, cached beside the id.
+       * without paying for it again is worth having, and it no longer costs anything: the
+       * graph now carries the posting's own items, so a reopened map is complete. The
+       * cached submission response supplies the extraction counts alone.
        */
       async function reopen(submissionId) {
         say('Loading stored graph…');
@@ -489,8 +504,9 @@
         mapPane.classList.add('on');
         el('back').style.display = '';
         el('headline').textContent =
-          `${vm.stats.nodes} concepts · ${vm.matchedCount} matched · ` +
-          `${vm.unresolved.length} asked for and not in the corpus`;
+          `${vm.stats.namedResolved} named and answerable · ` +
+          `${vm.stats.namedUnanswered} named and unanswered · ` +
+          `${vm.stats.adjacent} implied · ${vm.stats.offMap} of the corpus off this map`;
         drawLegend();
         renderSidebar();
         renderBanner();
@@ -520,11 +536,11 @@
             y: Math.sin(angle) * radius,
             vx: 0,
             vy: 0,
-            r: 3.5 + Math.sqrt(node.relevance) * 9,
+            r: radiusFor(node),
             pinned: false,
           };
         });
-        const index = new Map(nodes.map((node) => [node.ref.conceptId, node]));
+        const index = new Map(nodes.map((node) => [node.ref.id, node]));
         const springs = [
           ...model.authoredEdges.map((edge) => ({
             s: index.get(edge.a),
@@ -673,14 +689,30 @@
 
       /* ------------------------------------------------------------------ drawing */
 
-      /** Grey at relevance 0, warming to orange as the posting names it. */
-      function relevanceColour(relevance, alpha) {
-        if (relevance <= 0) return `rgba(112, 122, 143, ${alpha})`;
-        const t = Math.min(1, relevance);
-        const r = Math.round(150 + 105 * t);
-        const g = Math.round(140 + 69 * t - 40 * t * t);
-        const b = Math.round(150 - 89 * t);
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      /**
+       * One colour per layer, and the ordering between them is the message.
+       *
+       * Warm and solid is what the posting asked for and the corpus can answer. Red and
+       * hollow is what the posting asked for and nothing answers -- it has to read as
+       * present-but-empty, never as absent. Slate is the implied layer, kept deliberately
+       * quiet: if it competes with the other two for attention the map has failed at the
+       * thing it was rebuilt to do.
+       */
+      const LAYER_INK = {
+        'named-resolved': '255, 138, 61',
+        'named-unanswered': '255, 93, 115',
+        adjacent: '112, 122, 143',
+      };
+
+      function layerColour(layer, alpha) {
+        return `rgba(${LAYER_INK[layer] ?? LAYER_INK.adjacent}, ${alpha})`;
+      }
+
+      /** Size carries the same ordering as colour, so the layers survive a small canvas. */
+      function radiusFor(node) {
+        if (node.layer === 'named-resolved') return 9;
+        if (node.layer === 'named-unanswered') return 7;
+        return 3.2;
       }
 
       function resize() {
@@ -745,39 +777,39 @@
 
         for (const node of sim.nodes) {
           const p = toScreen(node);
-          const dim = focus !== null && !near.has(node.ref.conceptId);
+          const dim = focus !== null && !near.has(node.ref.id);
+          const layer = node.ref.layer;
           const alpha = dim ? 0.18 : 1;
           const radius = node.r * Math.max(0.75, Math.min(1.25, sim.view.scale));
           // Remembered for the label placement and the hit test below, which both need
           // the radius actually drawn rather than the unscaled one.
           node.drawn = radius;
 
-          if (node.ref.relevance > 0 && !dim) {
+          if (layer === 'named-resolved' && !dim) {
             ctx.beginPath();
-            ctx.arc(p.x, p.y, radius + 6, 0, Math.PI * 2);
-            ctx.fillStyle = relevanceColour(node.ref.relevance, 0.16);
+            ctx.arc(p.x, p.y, radius + 7, 0, Math.PI * 2);
+            ctx.fillStyle = layerColour(layer, 0.14);
             ctx.fill();
           }
 
           ctx.beginPath();
           ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-          if (node.ref.hasCorpus) {
-            // Material behind it: a solid disc.
-            ctx.fillStyle = relevanceColour(node.ref.relevance, alpha);
-            ctx.fill();
-          } else {
-            // Known only because another document links to it. Hollow and dashed, so a
-            // point with nothing behind it never reads like one that has material.
+          if (layer === 'named-unanswered') {
+            // Hollow, and hollow on purpose: the posting asked for this and the corpus
+            // has nothing to say. A filled point would claim material that is not there.
             ctx.fillStyle = '#0e1117';
             ctx.fill();
-            ctx.setLineDash([2, 2]);
-            ctx.lineWidth = 1.4;
-            ctx.strokeStyle = relevanceColour(node.ref.relevance, alpha * 0.9);
+            ctx.setLineDash([2.5, 2.5]);
+            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = layerColour(layer, alpha);
             ctx.stroke();
             ctx.setLineDash([]);
+          } else {
+            ctx.fillStyle = layerColour(layer, layer === 'adjacent' ? alpha * 0.7 : alpha);
+            ctx.fill();
           }
 
-          if (node.ref.conceptId === selected) {
+          if (node.ref.id === selected) {
             ctx.beginPath();
             ctx.arc(p.x, p.y, radius + 4, 0, Math.PI * 2);
             ctx.lineWidth = 1.5;
@@ -799,16 +831,17 @@
           const r = (node.drawn ?? node.r) + 1;
           return { x0: p.x - r, x1: p.x + r, y0: p.y - r, y1: p.y + r };
         });
+        // The two named layers are always labelled; the adjacent layer only on hover or
+        // with the toggle on. Naming forty implied concepts at rest is the fastest way to
+        // make the subordinate layer the loudest thing on the map.
+        const rank = { 'named-resolved': 2, 'named-unanswered': 1, adjacent: 0 };
         const candidates = sim.nodes
-          .filter((node) => {
-            const isFocus = near.has(node.ref.conceptId);
-            return labelAll || node.ref.relevance > 0 || isFocus;
-          })
+          .filter((node) => labelAll || node.ref.layer !== 'adjacent' || near.has(node.ref.id))
           .sort((a, b) => {
-            const aFocus = near.has(a.ref.conceptId) ? 1 : 0;
-            const bFocus = near.has(b.ref.conceptId) ? 1 : 0;
+            const aFocus = near.has(a.ref.id) ? 1 : 0;
+            const bFocus = near.has(b.ref.id) ? 1 : 0;
             if (aFocus !== bFocus) return bFocus - aFocus;
-            return b.ref.relevance - a.ref.relevance;
+            return rank[b.ref.layer] - rank[a.ref.layer];
           });
         for (const node of candidates) {
           const p = toScreen(node);
@@ -831,13 +864,15 @@
           }
           if (chosen === null) continue;
           placed.push(chosen.box);
-          const isFocus = near.has(node.ref.conceptId);
+          const isFocus = near.has(node.ref.id);
           const dim = focus !== null && !isFocus;
           ctx.fillStyle = dim
             ? 'rgba(230, 233, 239, 0.15)'
-            : node.ref.relevance > 0
+            : node.ref.layer === 'named-resolved'
               ? '#ffd8ba'
-              : 'rgba(230, 233, 239, 0.62)';
+              : node.ref.layer === 'named-unanswered'
+                ? '#ffc4cc'
+                : 'rgba(230, 233, 239, 0.4)';
           ctx.fillText(node.ref.name, p.x, p.y + chosen.dy);
         }
       }
@@ -848,8 +883,7 @@
 
       function strokeSpring(spring, near, focus, baseAlpha, width) {
         const lit =
-          focus !== null &&
-          (spring.s.ref.conceptId === focus || spring.t.ref.conceptId === focus);
+          focus !== null && (spring.s.ref.id === focus || spring.t.ref.id === focus);
         const dimmed = focus !== null && !lit;
         const a = toScreen(spring.s);
         const b = toScreen(spring.t);
@@ -875,7 +909,7 @@
         if (hit !== null) {
           dragging = hit;
           hit.pinned = true;
-          select(hit.ref.conceptId);
+          select(hit.ref.id);
         } else {
           panning = { x: event.clientX, y: event.clientY, ox: sim.view.x, oy: sim.view.y };
           select(null);
@@ -902,7 +936,7 @@
           return;
         }
         const hit = nodeAt(event);
-        const next = hit === null ? null : hit.ref.conceptId;
+        const next = hit === null ? null : hit.ref.id;
         if (next !== hovered) {
           hovered = next;
           if (selected === null) renderSidebar();
@@ -941,8 +975,8 @@
         return best;
       }
 
-      function select(conceptId) {
-        selected = conceptId;
+      function select(nodeId) {
+        selected = nodeId;
         renderSidebar();
         draw();
       }
@@ -951,22 +985,31 @@
 
       function renderBanner() {
         const banner = el('banner');
-        if (!vm.allUnmatched) {
-          banner.style.display = 'none';
+        if (vm.emptyMap) {
+          banner.style.display = '';
+          banner.textContent =
+            `Nothing technical was extracted from this posting, so there is nothing to ` +
+            `draw. The corpus still holds ${vm.stats.corpusConcepts} concepts; none of ` +
+            `them is on this map because the posting named none of them.`;
           return;
         }
-        banner.style.display = '';
-        banner.textContent =
-          `Nothing in this posting resolved to any concept. All ${vm.stats.nodes} points are ` +
-          `at relevance 0, so this map is the corpus itself — the only thing it says about ` +
-          `this posting is on the right, under what the corpus cannot answer.`;
+        if (vm.nothingAnswered) {
+          banner.style.display = '';
+          banner.textContent =
+            `The corpus answers none of this posting. All ${vm.stats.namedUnanswered} ` +
+            `points are hollow and unconnected — that is the posting mapped honestly, not ` +
+            `a rendering fault. ${vm.stats.corpusConcepts} concepts exist; this role ` +
+            `touches none of them.`;
+          return;
+        }
+        banner.style.display = 'none';
       }
 
       function drawLegend() {
         el('legend').innerHTML = [
-          key(dot('rgba(255,138,61,1)', false), 'named by the posting'),
-          key(dot('rgba(112,122,143,1)', false), 'in the corpus, not named'),
-          key(dot('rgba(112,122,143,1)', true), `no material behind it (${vm.withoutCorpusCount})`),
+          key(dot('rgba(255,138,61,1)', false, 6), `named, answerable (${vm.stats.namedResolved})`),
+          key(dot('rgba(255,93,115,1)', true, 5), `named, unanswered (${vm.stats.namedUnanswered})`),
+          key(dot('rgba(112,122,143,0.8)', false, 3), `implied, one hop (${vm.stats.adjacent})`),
           key(line('#7fb2ff', false), `authored link (${vm.stats.authoredEdges})`),
           key(line('#7e8cac', true), `inferred link (${vm.stats.inferredEdges})`),
         ].join('');
@@ -976,10 +1019,10 @@
         return `<div class="k">${mark}<span>${escapeHtml(label)}</span></div>`;
       }
 
-      function dot(colour, hollow) {
+      function dot(colour, hollow, r) {
         return hollow
-          ? `<svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="none" stroke="${colour}" stroke-width="1.4" stroke-dasharray="2 2"/></svg>`
-          : `<svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="${colour}"/></svg>`;
+          ? `<svg width="16" height="16"><circle cx="8" cy="8" r="${r}" fill="none" stroke="${colour}" stroke-width="1.6" stroke-dasharray="2.5 2.5"/></svg>`
+          : `<svg width="16" height="16"><circle cx="8" cy="8" r="${r}" fill="${colour}"/></svg>`;
       }
 
       function line(colour, dashed) {
@@ -988,8 +1031,7 @@
 
       function renderSidebar() {
         const focusId = selected ?? hovered;
-        const focus =
-          focusId === null ? null : vm.nodes.find((node) => node.conceptId === focusId);
+        const focus = focusId === null ? null : vm.nodes.find((node) => node.id === focusId);
         el('sidebar').innerHTML = [
           gapsBlock(),
           focusBlock(focus),
@@ -999,66 +1041,71 @@
         for (const item of document.querySelectorAll('ul.gaps li')) {
           item.querySelector('button').addEventListener('click', () => {
             item.classList.toggle('open');
+            select(item.dataset.node);
           });
         }
         for (const row of document.querySelectorAll('.neighbours .n')) {
-          row.addEventListener('click', () => select(row.dataset.concept));
+          row.addEventListener('click', () => select(row.dataset.node));
         }
       }
 
       function gapsBlock() {
-        if (!vm.unresolvedAvailable) {
+        if (vm.unanswered.length === 0) {
           return block(
-            'Asked for, not in the corpus',
-            '<p class="empty">Loaded from a stored graph, so the posting\'s unresolved items are not available.</p>',
+            'Named, and nothing answers it',
+            '<p class="empty">Everything the posting named has material behind it.</p>',
             true,
           );
         }
-        if (vm.unresolved.length === 0) {
-          return block(
-            'Asked for, not in the corpus',
-            '<p class="empty">Everything the posting named resolved to a concept.</p>',
-            true,
-          );
-        }
-        const items = vm.unresolved
+        const items = vm.unanswered
           .map(
-            (item) => `
-              <li>
-                <button>${escapeHtml(item.surface)}</button>
+            (node) => `
+              <li data-node="${escapeHtml(node.id)}">
+                <button>${escapeHtml(node.name)}${
+                  node.conceptId === null
+                    ? ''
+                    : ' <span class="tag-known">known, no material</span>'
+                }</button>
                 <div class="evidence">${
-                  item.evidence.length === 0
-                    ? 'No evidence span recorded.'
-                    : item.evidence.map((span) => `“${escapeHtml(span)}”`).join('<br />')
+                  node.evidence.length === 0
+                    ? 'A concept the corpus names and has no source material for.'
+                    : node.evidence.map((span) => `“${escapeHtml(span)}”`).join('<br />')
                 }</div>
               </li>`,
           )
           .join('');
         return block(
-          `Asked for, not in the corpus — ${vm.unresolved.length}`,
+          `Named, and nothing answers it — ${vm.unanswered.length}`,
           `<ul class="gaps">${items}</ul>
-           <p class="note">These are the things the posting named that no concept in the map
-           answers. They are the map's real content for a posting like this one; click one
-           for the wording it came from.</p>`,
+           <p class="note">These are on the map too, hollow and unconnected. Product names
+           belong here permanently — they are not patterns and never become concepts.
+           Click one to select it, again for the wording it came from.</p>`,
           true,
         );
       }
 
+      const LAYER_LABEL = {
+        'named-resolved': 'named by the posting, answerable',
+        'named-unanswered': 'named by the posting, unanswered',
+        adjacent: 'implied — one hop from something named',
+      };
+
       function focusBlock(focus) {
         if (focus === undefined || focus === null) {
-          return block(
-            'Concept',
-            '<p class="empty">Hover a point, or click one to pin it.</p>',
-          );
+          return block('Node', '<p class="empty">Hover a point, or click one to pin it.</p>');
         }
-        const neighbours = neighboursOf(vm, focus.conceptId);
+        const neighbours = neighboursOf(vm, focus.id);
         const rows =
           neighbours.length === 0
-            ? '<p class="empty">No links at all.</p>'
+            ? `<p class="empty">${
+                focus.conceptId === null
+                  ? 'No links, and correctly so: nothing in the corpus resolved this phrase, so there is nothing to link it to.'
+                  : 'No links at all.'
+              }</p>`
             : `<div class="neighbours">${neighbours
                 .map(
                   (n) => `
-                    <div class="n" data-concept="${escapeHtml(n.conceptId)}">
+                    <div class="n" data-node="${escapeHtml(n.id)}">
                       <span class="tag-${n.kind}">${n.kind === 'authored' ? '━' : '┄'}</span>
                       <span>${escapeHtml(n.name)}</span>
                       <em>${n.kind === 'authored' ? 'authored' : n.strength.toFixed(3)}</em>
@@ -1071,16 +1118,24 @@
             : `<div class="chips">${focus.matchedItems
                 .map((item) => `<span class="chip">${escapeHtml(item)}</span>`)
                 .join('')}</div>`;
+        const quoted =
+          focus.evidence.length === 0
+            ? ''
+            : `<p class="note" style="margin-bottom:4px">quoted from the posting</p>
+               <div class="evidence-open">${focus.evidence
+                 .map((span) => `“${escapeHtml(span)}”`)
+                 .join('<br />')}</div>`;
         return block(
           focus.name,
-          `<code>${escapeHtml(focus.conceptId)}</code>
+          `<code>${escapeHtml(focus.conceptId ?? 'no concept — the posting\'s own phrase')}</code>
            <dl class="facts" style="margin-top:8px">
-             <dt>relevance</dt><dd>${focus.relevance.toFixed(3)}</dd>
+             <dt>layer</dt><dd>${escapeHtml(LAYER_LABEL[focus.layer])}</dd>
              <dt>corpus material</dt><dd>${focus.hasCorpus ? 'yes' : '<span style="color:var(--gap)">none</span>'}</dd>
              <dt>authored links</dt><dd>${focus.authoredDegree}</dd>
              <dt>inferred links</dt><dd>${focus.inferredDegree}</dd>
            </dl>
            <p class="note" style="margin-bottom:4px">matched by</p>${matched}
+           ${quoted}
            ${rows}`,
         );
       }
@@ -1088,21 +1143,29 @@
       function countsBlock() {
         const s = vm.summary;
         return block(
-          'This map',
+          'This map, and the corpus behind it',
           `<dl class="facts">
-             ${s === null ? '' : `
-               <dt>items extracted</dt><dd>${s.total}</dd>
-               <dt>resolved exactly</dt><dd>${s.exact}</dd>
-               <dt>unresolved</dt><dd>${s.unresolved}</dd>`}
-             <dt>concepts</dt><dd>${vm.stats.nodes}</dd>
-             <dt>… named by the posting</dt><dd>${vm.matchedCount}</dd>
-             <dt>… with no material</dt><dd>${vm.withoutCorpusCount}</dd>
+             ${
+               s === null
+                 ? ''
+                 : `
+               <dt>phrases extracted</dt><dd>${s.total}</dd>
+               <dt>… resolved exactly</dt><dd>${s.exact}</dd>
+               <dt>… resolved by containment</dt><dd>${s.containment}</dd>
+               <dt>… unresolved</dt><dd>${s.unresolved}</dd>`
+             }
+             <dt>named, answerable</dt><dd>${vm.stats.namedResolved}</dd>
+             <dt>named, unanswered</dt><dd>${vm.stats.namedUnanswered}</dd>
+             <dt>implied, one hop</dt><dd>${vm.stats.adjacent}</dd>
+             <dt>concepts in the corpus</dt><dd>${vm.stats.corpusConcepts}</dd>
+             <dt>… not on this map</dt><dd>${vm.stats.offMap}</dd>
              <dt>authored edges</dt><dd>${vm.stats.authoredEdges}</dd>
              <dt>inferred edges</dt><dd>${vm.stats.inferredEdges}</dd>
-             <dt>mean degree</dt><dd>${vm.stats.meanDegree.toFixed(2)}</dd>
              <dt>inferred cut</dt><dd>${vm.stats.inferredCut === null ? '—' : vm.stats.inferredCut.toFixed(4)}</dd>
            </dl>
-           <p class="note">Similarity threshold: ${escapeHtml(vm.thresholdLabel)}</p>`,
+           <p class="note">The corpus is larger than this map on purpose: only what the
+           posting named, and one hop out from it, is drawn. Similarity threshold:
+           ${escapeHtml(vm.thresholdLabel)}</p>`,
         );
       }
 
