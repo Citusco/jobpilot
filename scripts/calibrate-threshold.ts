@@ -169,6 +169,15 @@ async function main() {
       );
     }
 
+    // The plainest reading of the same data: how often the concept a phrase was taken
+    // from is the strongest match for it. A threshold cannot rescue a phrase whose own
+    // concept is not even top of the list.
+    const topOne = result.scored.filter((row) => row.ownScore > row.bestOtherScore).length;
+    console.log(
+      `[calibrate] own concept is the strongest material match for ${topOne}/${result.scored.length} phrases ` +
+        `(${((100 * topOne) / Math.max(1, result.scored.length)).toFixed(0)}%)`,
+    );
+
     const record = {
       calibratedAt: new Date().toISOString(),
       baseline: MATCHING_BASELINE,
@@ -184,6 +193,7 @@ async function main() {
       separated: result.separated,
       threshold: result.threshold === null ? null : round4(result.threshold),
       overlap: result.overlap,
+      ownConceptIsTopMaterialMatch: { count: topOne, ofPhrases: result.scored.length },
       greyEvidence: {
         outScoresBestMaterialNonMatch: greyHijacks.length,
         outScoresOwnConcept: greyBeatsOwn.length,

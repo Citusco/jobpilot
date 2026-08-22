@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 
 import { NON_CONCEPT_IDS } from '../corpus/non-concept-ids.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { CALIBRATION, SIMILARITY_THRESHOLD } from '../resolve/calibration.js';
 import {
   assembleEdges,
   TARGET_MEAN_DEGREE,
@@ -120,9 +121,18 @@ export class ConceptGraphService {
 
     return {
       submissionId: submission.id,
-      // No calibration has been run yet, so there is no threshold to echo. Null says
-      // that; a placeholder number would be read as a measurement (FR-016, FR-019b).
-      threshold: null,
+      // The calibration has been run (docs/calibration/resolve-threshold.json) and found
+      // no separation between its two baselines, so there is no threshold in force to
+      // echo. Null says that; a placeholder number would be read as a measurement
+      // (FR-016, FR-018, FR-019b).
+      threshold:
+        SIMILARITY_THRESHOLD === null
+          ? null
+          : {
+              value: SIMILARITY_THRESHOLD,
+              baseline: CALIBRATION.baseline,
+              calibratedAt: CALIBRATION.calibratedAt,
+            },
       nodes,
       edges: [...authored, ...inferred],
       stats: {

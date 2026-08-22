@@ -98,6 +98,36 @@ describe('samplePhrases (matching-baseline phrases from a concept\'s own materia
     expect(phrases).toHaveLength(1);
   });
 
+  it('spreads the sample across the whole document rather than taking the first sentences', () => {
+    // Sections sort by chunkId, so "Context and problem" comes first for nearly every
+    // Azure pattern -- and that section is written to state a *general* difficulty before
+    // the pattern is named. Three phrases taken off the front of the pool would be three
+    // generic problem statements for every concept in the corpus, which measures a
+    // different and much harder question than the one FR-019a asks.
+    const section = (name: string, sentences: string[]): SourceChunk => ({
+      chunkId: `azure:bulkhead:${name}`,
+      headingPath: ['Bulkhead', name],
+      content: sentences.join(' '),
+    });
+    const sentence = (n: number) =>
+      `Sentence number ${n} describes an aspect of the design in enough words to clear the minimum length.`;
+
+    const phrases = samplePhrases(
+      {
+        conceptId: 'bulkhead',
+        mask: [],
+        chunks: [
+          section('a-context-and-problem', [sentence(1), sentence(2), sentence(3)]),
+          section('b-solution', [sentence(4), sentence(5), sentence(6)]),
+          section('c-when-to-use', [sentence(7), sentence(8), sentence(9)]),
+        ],
+      },
+      3,
+    );
+
+    expect(phrases).toEqual([sentence(2), sentence(5), sentence(8)]);
+  });
+
   it('is repeatable: the same chunks yield the same phrases in the same order (FR-019)', () => {
     const first = sample([links, body, preamble]);
     const second = sample([preamble, body, links]);

@@ -40,8 +40,28 @@ const MASK_REPLACEMENT = 'this approach';
  *
  * Order is by `chunkId` and then by position within the chunk, so the same rows produce
  * the same phrases in the same order however the caller happened to fetch them (FR-019).
+ *
+ * The chosen phrases are spread evenly across the whole eligible pool rather than taken
+ * from its front. Taking the front is the obvious implementation and it is systematically
+ * biased: sections sort by `chunkId`, so "Context and problem" comes first for nearly
+ * every Azure pattern, and that section is written to state a *general* difficulty before
+ * the pattern is introduced. A sample made only of those sentences measures how well
+ * generic problem statements identify a concept, which is a different and much harder
+ * question than the one FR-019a asks.
  */
 export function samplePhrases(input: PhraseSamplingInput, perConcept: number): string[] {
+  const pool = eligiblePhrases(input);
+  if (pool.length <= perConcept) return pool;
+
+  const chosen: string[] = [];
+  for (let i = 0; i < perConcept; i++) {
+    chosen.push(pool[Math.floor(((i + 0.5) * pool.length) / perConcept)]);
+  }
+  return chosen;
+}
+
+/** Every phrase a concept's material yields, in document order. */
+export function eligiblePhrases(input: PhraseSamplingInput): string[] {
   const chunks = [...input.chunks].sort((a, b) => a.chunkId.localeCompare(b.chunkId));
   const phrases: string[] = [];
 
@@ -56,7 +76,6 @@ export function samplePhrases(input: PhraseSamplingInput, perConcept: number): s
       if (masked.length < MIN_PHRASE_CHARS || masked.length > MAX_PHRASE_CHARS) continue;
       if (phrases.includes(masked)) continue;
       phrases.push(masked);
-      if (phrases.length >= perConcept) return phrases;
     }
   }
 
@@ -80,9 +99,9 @@ function isMostlyLinks(content: string): boolean {
   return linked * 2 >= lines.length;
 }
 
-/** `[text](url)` becomes `text`; the URL is not prose. */
+/** `[text](url)` and `[text][ref]` become `text`; the target is not prose. */
 function unlink(content: string): string {
-  return content.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  return content.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1');
 }
 
 function splitSentences(content: string): string[] {
