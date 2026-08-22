@@ -12,6 +12,7 @@ training-directions pipeline (FR-020). There is no branch left: this service rep
 a posting mentions and never judges whether that is enough (FR-004, FR-022).
 """
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -25,6 +26,59 @@ class AgentLLMError(Exception):
     """Raised when the underlying LLM call fails or returns output that fails schema
     validation (constitution Principle I: raw/invalid output must never be passed
     through)."""
+
+
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _realign(span: str, jd_text: str, surface: str) -> str:
+    """Return the posting's own wording for `span`, or raise if there is none.
+
+    An exact substring is returned unchanged. Otherwise the span and the posting are both
+    compared with runs of whitespace treated as equal, and the matching region of the
+    *posting* is returned -- never the model's rewrapped version of it. Anything that
+    differs by more than whitespace is a paraphrase and still fails, which is hard
+    constraint 1 and the reason evidence is worth anything.
+    """
+    if span in jd_text:
+        return span
+
+    needle = _WHITESPACE.sub(" ", span).strip()
+    if needle == "":
+        raise AgentLLMError(
+            f"extract_items: evidence for {surface!r} is empty once whitespace is removed"
+        )
+
+    # Collapse the posting the same way, keeping an index from every character of the
+    # collapsed form back to where it came from. That is what makes it possible to return
+    # the posting's own text rather than the model's rewrapped copy of it -- the whole
+    # point of the guard is that a stored span can be located in the source later.
+    collapsed: list[str] = []
+    origin: list[int] = []
+    position = 0
+    while position < len(jd_text):
+        if jd_text[position].isspace():
+            run = position
+            while run < len(jd_text) and jd_text[run].isspace():
+                run += 1
+            collapsed.append(" ")
+            origin.append(position)
+            position = run
+        else:
+            collapsed.append(jd_text[position])
+            origin.append(position)
+            position += 1
+    haystack = "".join(collapsed)
+
+    found = haystack.find(needle)
+    if found == -1:
+        raise AgentLLMError(
+            f"extract_items: evidence for {surface!r} is not a substring "
+            f"of the submitted text: {span!r}"
+        )
+    # `needle` is stripped, so its last character is never a collapsed whitespace run and
+    # the end offset is exact.
+    return jd_text[origin[found] : origin[found + len(needle) - 1] + 1]
 
 
 _EXTRACT_ITEMS_PROMPT = ChatPromptTemplate.from_messages(
@@ -83,13 +137,17 @@ def make_extract_items_node(
         # `evidence` value the caller stores and can never locate in the source text.
         # The caller's Zod schema asserts the same thing at the HTTP boundary; both sides
         # own it, because each is the last chance to catch it on its own side of the wire.
+        #
+        # The comparison ignores how whitespace is broken up, and only that. Measured:
+        # roughly one long posting in three failed here because the model returned the
+        # span with the posting's hard line break collapsed to a space. That is not a
+        # paraphrase, and refusing it made a correct extraction look like a 502. What is
+        # kept is always the posting's own text, so the caller's identical substring check
+        # still passes and a stored span can still be located in the source.
         for item in validated.items:
-            for span in item.evidence:
-                if span not in state.jd_text:
-                    raise AgentLLMError(
-                        f"extract_items: evidence for {item.surface!r} is not a substring "
-                        f"of the submitted text: {span!r}"
-                    )
+            item.evidence = [
+                _realign(span, state.jd_text, item.surface) for span in item.evidence
+            ]
 
         return {"items": validated.items}
 
