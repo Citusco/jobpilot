@@ -138,12 +138,11 @@ this feature's whole premise came from a query the damage prevented.
 
 - **FR-001**: The corpus configuration MUST reach the pages that currently-admitted concepts refer
   to. All eighteen exist at the pinned commit, spread across nine directories, so reaching them
-  necessarily makes many neighbouring files reachable too.
-  [NEEDS CLARIFICATION: how widely? Measured candidate counts at the pinned commit — whole parent
-  directories: 262 files; narrowed to the specific subdirectories containing the eighteen: 145;
-  the AI-engineering material alone, skipping the grey pages entirely: 52. Every candidate needs
-  a human admission decision under FR-005, so this choice sets how much reviewing the feature
-  costs.]
+  necessarily makes neighbouring files reachable too. Reach is narrowed to the specific
+  subdirectories containing them rather than their whole parents: 145 candidate files rather than
+  262. The difference is almost entirely one general-purpose guide directory of 123 files and a
+  cloud-comparison directory of 21, neither of which would repay the review that FR-005 requires
+  of every candidate.
 - **FR-002**: The corpus configuration MUST reach the source's material on retrieval, prompting,
   evaluation, agent design and model selection, and its catalogue of anti-patterns.
 - **FR-003**: Expansion MUST remain within the pinned commit. Refetching MUST continue to
@@ -242,6 +241,10 @@ this feature's whole premise came from a query the damage prevented.
   why FR-006 excludes whole categories rather than admitting everything reachable.
 - **The measurements are comparable.** The same five job descriptions, already stored, are
   re-resolved. Their extraction does not change; only what they can resolve against does.
+- **Reach is narrowed deliberately, and the narrowing is a judgment rather than a rule.** Of the
+  145 candidates, 52 are the AI-engineering material this feature needs regardless; the other 93
+  come with the eighteen grey pages, and most are concept-shaped best-practice and design material
+  worth reviewing on its own account. Reviewing them is expected to produce value, not only cost.
 
 ## Dependencies
 
