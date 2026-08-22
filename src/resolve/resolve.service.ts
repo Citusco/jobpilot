@@ -1,17 +1,20 @@
 import { Injectable } from '@nestjs/common';
 
+import { NON_CONCEPT_IDS } from '../corpus/non-concept-ids.js';
 import { normalizeTerm } from '../corpus/normalize-term.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { buildContainmentIndex, matchByContainment } from './containment-match.js';
+import type { ApiResolutionTier } from './resolution-tier.js';
 
-export type ResolutionTier = 'exact' | 'similarity' | 'unresolved';
+export type ResolutionTier = ApiResolutionTier;
 
 /**
  * One phrase and what the corpus says it refers to.
  *
- * Exactly three outcomes exist and there is no fourth. `conceptId` is null if and only if
- * `tier` is `unresolved`; the state is carried by `tier`, never inferred from the null
- * (data-model.md). `score` is null for `exact` -- there is no score, and writing 1.0
- * would record a measurement that never happened.
+ * Four outcomes exist and there is no fifth. `conceptId` is null if and only if `tier` is
+ * `unresolved`; the state is carried by `tier`, never inferred from the null
+ * (data-model.md). `score` is null for `exact` and for `containment` -- neither is a
+ * measurement, and writing 1.0 would record one that never happened.
  */
 export interface Resolution {
   surface: string;
@@ -22,21 +25,26 @@ export interface Resolution {
 }
 
 /**
- * Tier 1: an exact match of the normalised phrase against `concept_terms`.
+ * Tier 1, in two passes over `concept_terms` and nothing else.
  *
- * `concept_terms.term` is the primary key, so this is one indexed lookup that yields at
- * most one concept per phrase -- deterministic, and by FR-006 it must not consult any
- * similarity measure. That is why this class takes Prisma and nothing else: it has no
- * embedding client to call and no threshold to apply.
+ * Pass one is exact equality of the normalised phrase against the term primary key: one
+ * indexed lookup, at most one concept per phrase. Pass two, for the phrases pass one
+ * missed, asks whether the phrase *contains* a registered term at word boundaries --
+ * `retry patterns` contains `retry`, `microservices estate` contains `microservices`. It
+ * is deterministic and offline for the same reason pass one is, which is why this class
+ * still takes Prisma and nothing else: no embedding client, no threshold.
  *
- * Everything the exact tier does not match is `unresolved` in this feature's first
- * increment. The similarity tier arrives with the calibration that gives it a threshold
- * (US3); adding it now against a placeholder number is exactly what FR-016 forbids.
+ * Neither pass is the similarity tier. The calibration that would give one a threshold
+ * ran and found no separation, and FR-016 forbids a number without a measurement behind
+ * it; the containment pass needs no number, which is precisely why it is admissible here
+ * and a nearest-vector fallback is not (FR-008).
  *
  * Tier 1 can be confidently wrong and that is accepted by design: "rate limiting" names
  * `rate-limiting` exactly while colloquially usually meaning `throttling`
- * (docs/DECISIONS.md, 2026-08-10). The graph is what surfaces the neighbour; overriding
- * an exact match here would remove the one place in resolve that cannot be wrong.
+ * (docs/DECISIONS.md, 2026-08-10). The graph is what surfaces the neighbour. The
+ * containment pass raises that stake -- it resolves phrases nothing downstream can
+ * overrule -- so it declines wherever the answer is arguable; see
+ * `matchByContainment`.
  */
 @Injectable()
 export class ResolveService {
@@ -52,14 +60,37 @@ export class ResolveService {
     });
     const byTerm = new Map(rows.map((row) => [row.term, row.conceptId]));
 
-    return surfaces.map((surface, index) => {
-      const term = normalized[index];
+    const misses = surfaces.filter((_, index) => !byTerm.has(normalized[index]));
+    // The whole term index, but only when there is something left to match against it.
+    // A posting whose every phrase resolved exactly pays for one query, as before.
+    const index =
+      misses.length === 0
+        ? null
+        : buildContainmentIndex(
+            await this.prisma.conceptTerm.findMany({
+              select: { displayTerm: true, conceptId: true },
+            }),
+            NON_CONCEPT_IDS,
+          );
+
+    return surfaces.map((surface, position) => {
+      const term = normalized[position];
       const conceptId = byTerm.get(term);
-      if (conceptId === undefined) {
-        // No nearest-concept fallback (FR-008). An honest unresolved is the answer.
-        return { surface, normalized: term, conceptId: null, tier: 'unresolved', score: null };
+      if (conceptId !== undefined) {
+        return { surface, normalized: term, conceptId, tier: 'exact', score: null };
       }
-      return { surface, normalized: term, conceptId, tier: 'exact', score: null };
+      const contained = index === null ? null : matchByContainment(surface, index);
+      if (contained !== null) {
+        return {
+          surface,
+          normalized: term,
+          conceptId: contained.conceptId,
+          tier: 'containment',
+          score: null,
+        };
+      }
+      // No nearest-concept fallback (FR-008). An honest unresolved is the answer.
+      return { surface, normalized: term, conceptId: null, tier: 'unresolved', score: null };
     });
   }
 }

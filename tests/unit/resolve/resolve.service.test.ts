@@ -12,8 +12,13 @@ interface TermRow {
 // the similarity tier arrives with its calibration (US3), because a similarity tier
 // running against an uncalibrated threshold is what FR-016 forbids.
 describe('ResolveService (tier 1)', () => {
+  // Tier 1 makes two queries: the exact lookup (`where`) and, only when something missed,
+  // the whole term index the containment pass matches against. These cases are about the
+  // exact pass, so the index comes back empty and containment can never fire.
   const buildDeps = (rows: TermRow[] = []) => {
-    const findMany = jest.fn<(args: unknown) => Promise<TermRow[]>>().mockResolvedValue(rows);
+    const findMany = jest
+      .fn<(args: { where?: unknown }) => Promise<TermRow[]>>()
+      .mockImplementation(async (args) => (args?.where === undefined ? [] : rows));
     const queryRaw = jest.fn();
     const prisma = { conceptTerm: { findMany }, $queryRaw: queryRaw, $queryRawUnsafe: queryRaw };
     const service = new ResolveService(prisma as never);
@@ -90,7 +95,9 @@ describe('ResolveService (tier 1)', () => {
     await service.resolve(['CQRS', 'something the corpus has never heard of']);
 
     expect(queryRaw).not.toHaveBeenCalled();
-    expect(findMany).toHaveBeenCalledTimes(1);
+    // Two `concept_terms` reads and nothing else: the exact lookup, then the term index
+    // for the phrase it missed. Both are table lookups; neither scores anything.
+    expect(findMany).toHaveBeenCalledTimes(2);
   });
 
   it('resolves two spellings of the same term to the same concept', async () => {

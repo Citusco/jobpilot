@@ -21,6 +21,11 @@ interface TermRow {
   conceptId: string;
 }
 
+interface IndexRow {
+  displayTerm: string;
+  conceptId: string;
+}
+
 interface CreatedSubmission {
   id: string;
   rawText: string;
@@ -30,7 +35,17 @@ interface CreatedSubmission {
 describe('POST /jd-submissions (contract)', () => {
   let app: INestApplication;
   let extract: ReturnType<typeof jest.fn<(text: string) => Promise<ExtractResponse>>>;
-  let findMany: ReturnType<typeof jest.fn<(args: unknown) => Promise<TermRow[]>>>;
+  let findMany: ReturnType<
+    typeof jest.fn<(args: { where?: unknown }) => Promise<TermRow[] | IndexRow[]>>
+  >;
+
+  /**
+   * Tier 1 reads `concept_terms` twice -- the exact lookup, then the term index the
+   * containment pass matches against -- and the two return different columns. The
+   * `where` clause is what tells them apart.
+   */
+  const terms = (exact: TermRow[], index: IndexRow[] = []) =>
+    findMany.mockImplementation(async (args) => (args?.where === undefined ? index : exact));
   let create: ReturnType<typeof jest.fn<(args: unknown) => Promise<CreatedSubmission>>>;
 
   const post = (body: object) =>
@@ -40,7 +55,7 @@ describe('POST /jd-submissions (contract)', () => {
 
   beforeAll(async () => {
     extract = jest.fn<(text: string) => Promise<ExtractResponse>>();
-    findMany = jest.fn<(args: unknown) => Promise<TermRow[]>>();
+    findMany = jest.fn<(args: { where?: unknown }) => Promise<TermRow[] | IndexRow[]>>();
     create = jest.fn<(args: unknown) => Promise<CreatedSubmission>>();
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -65,7 +80,8 @@ describe('POST /jd-submissions (contract)', () => {
 
   beforeEach(() => {
     extract.mockReset();
-    findMany.mockReset().mockResolvedValue([]);
+    findMany.mockReset();
+    terms([]);
     create.mockReset().mockResolvedValue({
       id: 'submission-1',
       rawText: JD_TEXT,
@@ -84,9 +100,7 @@ describe('POST /jd-submissions (contract)', () => {
           { surface: 'Kubernetes', evidence: ['running Kubernetes in production'] },
         ],
       });
-      findMany.mockResolvedValue([
-        { term: 'queuebasedloadleveling', conceptId: 'queue-based-load-leveling' },
-      ]);
+      terms([{ term: 'queuebasedloadleveling', conceptId: 'queue-based-load-leveling' }]);
 
       const response = await post({ text: JD_TEXT });
 
@@ -109,11 +123,11 @@ describe('POST /jd-submissions (contract)', () => {
             evidence: ['running Kubernetes in production'],
           },
         ],
-        summary: { total: 2, exact: 1, similarity: 0, unresolved: 1 },
+        summary: { total: 2, exact: 1, containment: 0, similarity: 0, unresolved: 1 },
       });
     });
 
-    it('gives every item exactly one of the three tiers, and no fourth state', async () => {
+    it('gives every item exactly one tier, and never a concept without one', async () => {
       // SC-002. An item with a concept and tier `unresolved`, or without a concept and
       // any other tier, is the shape FR-008 forbids.
       extract.mockResolvedValue({
@@ -122,14 +136,63 @@ describe('POST /jd-submissions (contract)', () => {
           { surface: 'Kubernetes', evidence: ['running Kubernetes in production'] },
         ],
       });
-      findMany.mockResolvedValue([{ term: 'cqrs', conceptId: 'cqrs' }]);
+      terms([{ term: 'cqrs', conceptId: 'cqrs' }]);
 
       const { body } = await post({ text: JD_TEXT });
 
       for (const item of body.items as Array<{ tier: string; conceptId: string | null }>) {
-        expect(['exact', 'similarity', 'unresolved']).toContain(item.tier);
+        expect(['exact', 'containment', 'similarity', 'unresolved']).toContain(item.tier);
         expect(item.conceptId === null).toBe(item.tier === 'unresolved');
       }
+    });
+
+    it('reports a containment hit as its own tier, and counts it separately', async () => {
+      // The phrase is not a registered term; it contains one. That is a weaker claim than
+      // exact equality and the response says which of the two produced the concept, so a
+      // wrong resolution can be traced to the pass responsible for it.
+      extract.mockResolvedValue({
+        items: [{ surface: 'retry patterns', evidence: ['operating Queue-Based Load Leveling'] }],
+      });
+      terms([], [{ displayTerm: 'retry', conceptId: 'retry' }]);
+
+      const { body } = await post({ text: JD_TEXT });
+
+      expect(body.items).toEqual([
+        {
+          surface: 'retry patterns',
+          conceptId: 'retry',
+          tier: 'containment',
+          score: null,
+          evidence: ['operating Queue-Based Load Leveling'],
+        },
+      ]);
+      expect(body.summary).toEqual({
+        total: 1,
+        exact: 0,
+        containment: 1,
+        similarity: 0,
+        unresolved: 0,
+      });
+    });
+
+    it('stores a containment hit as `exact`, keeping the phrase that distinguishes it', async () => {
+      // No fourth enum value, so the column says `exact` and `normalized` is what tells
+      // the two passes apart on the way back out (src/resolve/resolution-tier.ts).
+      extract.mockResolvedValue({
+        items: [{ surface: 'retry patterns', evidence: ['operating Queue-Based Load Leveling'] }],
+      });
+      terms([], [{ displayTerm: 'retry', conceptId: 'retry' }]);
+
+      await post({ text: JD_TEXT });
+
+      const stored = (
+        create.mock.calls[0][0] as {
+          data: { items: { create: { tier: string; normalized: string }[] } };
+        }
+      ).data.items.create;
+      expect(stored).toEqual([
+        expect.objectContaining({ tier: 'exact', normalized: 'retrypatterns' }),
+      ]);
     });
 
     it('reports summary counts that add up to the item list', async () => {
@@ -140,14 +203,22 @@ describe('POST /jd-submissions (contract)', () => {
           { surface: 'Terraform', evidence: ['running Kubernetes in production'] },
         ],
       });
-      findMany.mockResolvedValue([{ term: 'cqrs', conceptId: 'cqrs' }]);
+      terms([{ term: 'cqrs', conceptId: 'cqrs' }]);
 
       const { body } = await post({ text: JD_TEXT });
       const summary = body.summary as Record<string, number>;
 
-      expect(summary.exact + summary.similarity + summary.unresolved).toBe(summary.total);
+      expect(
+        summary.exact + summary.containment + summary.similarity + summary.unresolved,
+      ).toBe(summary.total);
       expect(summary.total).toBe((body.items as unknown[]).length);
-      expect(summary).toEqual({ total: 3, exact: 1, similarity: 0, unresolved: 2 });
+      expect(summary).toEqual({
+        total: 3,
+        exact: 1,
+        containment: 0,
+        similarity: 0,
+        unresolved: 2,
+      });
     });
 
     it('merges repeated mentions of one phrase into a single item keeping every occurrence', async () => {
@@ -167,7 +238,13 @@ describe('POST /jd-submissions (contract)', () => {
         'running Kubernetes in production',
         'operating Queue-Based Load Leveling',
       ]);
-      expect(body.summary).toEqual({ total: 1, exact: 0, similarity: 0, unresolved: 1 });
+      expect(body.summary).toEqual({
+        total: 1,
+        exact: 0,
+        containment: 0,
+        similarity: 0,
+        unresolved: 1,
+      });
     });
   });
 
@@ -181,7 +258,13 @@ describe('POST /jd-submissions (contract)', () => {
 
       expect(response.status).toBe(201);
       expect(response.body.items).toEqual([]);
-      expect(response.body.summary).toEqual({ total: 0, exact: 0, similarity: 0, unresolved: 0 });
+      expect(response.body.summary).toEqual({
+        total: 0,
+        exact: 0,
+        containment: 0,
+        similarity: 0,
+        unresolved: 0,
+      });
     });
 
     it('accepts a posting the corpus does not cover, returning it all unresolved', async () => {
@@ -193,12 +276,18 @@ describe('POST /jd-submissions (contract)', () => {
           { surface: 'Terraform', evidence: ['running Kubernetes in production'] },
         ],
       });
-      findMany.mockResolvedValue([]);
+      terms([]);
 
       const response = await post({ text: JD_TEXT });
 
       expect(response.status).toBe(201);
-      expect(response.body.summary).toEqual({ total: 2, exact: 0, similarity: 0, unresolved: 2 });
+      expect(response.body.summary).toEqual({
+        total: 2,
+        exact: 0,
+        containment: 0,
+        similarity: 0,
+        unresolved: 2,
+      });
     });
 
     it('carries no trace of the removed pipeline in its response', async () => {
@@ -303,9 +392,7 @@ describe('POST /jd-submissions (contract)', () => {
           { surface: 'Kubernetes', evidence: ['running Kubernetes in production'] },
         ],
       });
-      findMany.mockResolvedValue([
-        { term: 'queuebasedloadleveling', conceptId: 'queue-based-load-leveling' },
-      ]);
+      terms([{ term: 'queuebasedloadleveling', conceptId: 'queue-based-load-leveling' }]);
 
       await post({ text: JD_TEXT });
 

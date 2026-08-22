@@ -28,7 +28,12 @@ describe('JdSubmissionsService', () => {
     const create = jest.fn<(args: unknown) => Promise<{ id: string }>>().mockResolvedValue({
       id: 'submission-1',
     });
-    const findMany = jest.fn<(args: unknown) => Promise<TermRow[]>>().mockResolvedValue(terms);
+    // Tier 1 reads `concept_terms` twice: the exact lookup (`where`), then the whole
+    // term index for anything that missed. These cases are about merging and storage, so
+    // the index comes back empty and the containment pass can never fire.
+    const findMany = jest
+      .fn<(args: { where?: unknown }) => Promise<TermRow[]>>()
+      .mockImplementation(async (args) => (args?.where === undefined ? [] : terms));
     const prisma = { jdSubmission: { create }, conceptTerm: { findMany } };
     const service = new JdSubmissionsService(
       { extract } as never,
@@ -142,7 +147,13 @@ describe('JdSubmissionsService', () => {
 
     const result = await service.submit('a friendly team');
 
-    expect(result.summary).toEqual({ total: 0, exact: 0, similarity: 0, unresolved: 0 });
+    expect(result.summary).toEqual({
+      total: 0,
+      exact: 0,
+      containment: 0,
+      similarity: 0,
+      unresolved: 0,
+    });
     expect(create).toHaveBeenCalledTimes(1);
     expect(storedItems(create as never)).toEqual([]);
   });

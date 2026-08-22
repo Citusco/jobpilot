@@ -40,7 +40,9 @@ const TERMS = [
   { displayTerm: 'overview', conceptId: 'overview' },
 ];
 
-const index = buildContainmentIndex(TERMS);
+// The exclusion set the resolver passes in production. Kept here because half of what
+// the guards below assert only holds with it applied.
+const index = buildContainmentIndex(TERMS, new Set(['patterns', 'index', 'overview']));
 
 const match = (surface: string) => matchByContainment(surface, index);
 

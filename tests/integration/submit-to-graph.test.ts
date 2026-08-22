@@ -109,6 +109,55 @@ describe('submit a posting through to stored items (integration)', () => {
     }
   });
 
+  it('recovers the eight phrases the exact tier missed, against the real term index', async () => {
+    // Measured on a real posting: 8 of its 29 unresolved items literally contained a
+    // registered concept name. This is the same list, run against the corpus as it
+    // actually stands rather than against a fixture term table -- the exclusion of the
+    // navigation pages and the longest-match rule both depend on the real 147 terms.
+    const phrases = [
+      ['ambassador patterns', 'ambassador'],
+      ['compensating transaction handling', 'compensating-transaction'],
+      ['event-driven flows', 'event-driven'],
+      ['microservices estate', 'microservices'],
+      ['publisher-subscriber topology', 'publisher-subscriber'],
+      ['REST API design', 'api-design'],
+      ['retry patterns', 'retry'],
+      ['strangler fig approach', 'strangler-fig'],
+    ];
+    const text = phrases.map(([surface]) => `We use ${surface} here.`).join(' ');
+    extract.mockResolvedValue({
+      items: phrases.map(([surface]) => ({ surface, evidence: [`We use ${surface} here.`] })),
+    });
+
+    const response = await submit(text);
+
+    expect(response.status).toBe(201);
+    const items = response.body.items as ResponseItem[];
+    expect(items.map((item) => [item.surface, item.conceptId])).toEqual(phrases);
+    expect(items.every((item) => item.tier === 'containment')).toBe(true);
+    expect(response.body.summary).toMatchObject({ total: 8, exact: 0, containment: 8 });
+  });
+
+  it('does not let the containment pass answer a product name', async () => {
+    // Go, Kafka and Kubernetes are what a posting's unresolved list is mostly made of,
+    // and none of them is a pattern. A containment pass that started attaching them to
+    // something nearby would break the project's own alias rule silently.
+    extract.mockResolvedValue({
+      items: [
+        { surface: 'Go', evidence: ['Go'] },
+        { surface: 'Kafka', evidence: ['Kafka'] },
+        { surface: 'GraphQL APIs', evidence: ['GraphQL APIs'] },
+        { surface: 'Kubernetes operators', evidence: ['Kubernetes operators'] },
+      ],
+    });
+
+    const response = await submit('Go Kafka GraphQL APIs Kubernetes operators');
+
+    expect(response.status).toBe(201);
+    const items = response.body.items as ResponseItem[];
+    expect(items.map((item) => item.conceptId)).toEqual([null, null, null, null]);
+  });
+
   it('resolves what the corpus covers and honestly reports what it does not', async () => {
     const response = await submit(JD_TEXT);
 
@@ -120,7 +169,13 @@ describe('submit a posting through to stored items (integration)', () => {
       ['Circuit Breaker', 'circuit-breaker', 'exact'],
       ['Kubernetes', null, 'unresolved'],
     ]);
-    expect(response.body.summary).toEqual({ total: 4, exact: 3, similarity: 0, unresolved: 1 });
+    expect(response.body.summary).toEqual({
+      total: 4,
+      exact: 3,
+      containment: 0,
+      similarity: 0,
+      unresolved: 1,
+    });
   });
 
   it('resolves "rate limiting" to rate-limiting at tier 1, deterministically', async () => {
@@ -210,7 +265,13 @@ describe('submit a posting through to stored items (integration)', () => {
     const response = await submit(JD_TEXT);
 
     expect(response.status).toBe(201);
-    expect(response.body.summary).toEqual({ total: 2, exact: 0, similarity: 0, unresolved: 2 });
+    expect(response.body.summary).toEqual({
+      total: 2,
+      exact: 0,
+      containment: 0,
+      similarity: 0,
+      unresolved: 2,
+    });
     expect((response.body.items as ResponseItem[]).every((item) => item.conceptId === null)).toBe(
       true,
     );

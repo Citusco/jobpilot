@@ -4,6 +4,7 @@ import { AgentOrchestrationClient } from '../agent-orchestration/agent-orchestra
 import type { ExtractedItem } from '../agent-orchestration/schemas/extract-response.schema.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { normalizeTerm } from '../corpus/normalize-term.js';
+import { storedTierFor } from '../resolve/resolution-tier.js';
 import { ResolveService, type ResolutionTier } from '../resolve/resolve.service.js';
 
 export interface SubmittedItem {
@@ -17,6 +18,8 @@ export interface SubmittedItem {
 export interface JdSubmissionSummary {
   total: number;
   exact: number;
+  /** Tier 1's second pass: the phrase contains a registered term rather than being one. */
+  containment: number;
   similarity: number;
   unresolved: number;
 }
@@ -49,7 +52,10 @@ export class JdSubmissionsService {
       normalized: resolution.normalized,
       evidence: merged[index].evidence,
       conceptId: resolution.conceptId,
-      tier: resolution.tier,
+      // `containment` is stored as `exact` and read back apart from it by comparing
+      // `normalized` against the term index -- see src/resolve/resolution-tier.ts for
+      // why the column does not grow a fourth value.
+      tier: storedTierFor(resolution.tier),
       score: resolution.score,
     }));
 
@@ -57,10 +63,10 @@ export class JdSubmissionsService {
       data: { rawText: text, items: { create: rows } },
     });
 
-    const responseItems: SubmittedItem[] = rows.map((row) => ({
+    const responseItems: SubmittedItem[] = rows.map((row, index) => ({
       surface: row.surface,
       conceptId: row.conceptId,
-      tier: row.tier,
+      tier: resolutions[index].tier,
       score: row.score,
       evidence: row.evidence,
     }));
@@ -109,6 +115,7 @@ function summarize(items: SubmittedItem[]): JdSubmissionSummary {
   return {
     total: items.length,
     exact: items.filter((item) => item.tier === 'exact').length,
+    containment: items.filter((item) => item.tier === 'containment').length,
     similarity: items.filter((item) => item.tier === 'similarity').length,
     unresolved: items.filter((item) => item.tier === 'unresolved').length,
   };
