@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JobPilot — concept map</title>
+    <style>
+      :root {
+        --bg: #0e1117;
+        --panel: #161b25;
+        --panel-2: #1d2331;
+        --line: #2a3245;
+        --ink: #e6e9ef;
+        --ink-dim: #98a2b8;
+        --ink-faint: #6b7488;
+        --hot: #ff8a3d;
+        --hot-2: #ffd166;
+        --authored: #7fb2ff;
+        --inferred: #4a5570;
+        --gap: #ff5d73;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        flex: none;
+      }
+
+      header h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0;
+        letter-spacing: 0.2px;
+      }
+
+      header .sub {
+        color: var(--ink-faint);
+        font-size: 12px;
+      }
+
+      header .spacer { flex: 1; }
+
+      button {
+        font: inherit;
+        color: var(--ink);
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 11px;
+        cursor: pointer;
+      }
+
+      button:hover { border-color: #3d4761; }
+
+      button.primary {
+        background: var(--hot);
+        border-color: var(--hot);
+        color: #201004;
+        font-weight: 600;
+      }
+
+      button:disabled { opacity: 0.5; cursor: default; }
+
+      /* ---------- entry ---------- */
+
+      #entry {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        overflow: auto;
+      }
+
+      #entry .card {
+        width: min(760px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 20px;
+      }
+
+      #entry h2 { margin: 0 0 6px; font-size: 16px; }
+
+      #entry p { margin: 0 0 14px; color: var(--ink-dim); }
+
+      textarea {
+        width: 100%;
+        min-height: 240px;
+        resize: vertical;
+        background: #0b0e14;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 11px;
+        font: 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      #status { color: var(--ink-dim); font-size: 13px; }
+      #status.bad { color: var(--gap); }
+
+      /* ---------- map ---------- */
+
+      #map {
+        flex: 1;
+        display: none;
+        min-height: 0;
+      }
+
+      #map.on { display: grid; grid-template-columns: 1fr 340px; }
+
+      #stage {
+        position: relative;
+        min-width: 0;
+        background:
+          radial-gradient(1200px 700px at 55% 40%, #131824 0%, var(--bg) 70%);
+      }
+
+      canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+      canvas.dragging { cursor: grabbing; }
+
+      #controls {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        align-items: center;
+        background: rgba(22, 27, 37, 0.9);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 11px;
+        font-size: 12px;
+      }
+
+      #controls label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+
+      #banner {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        background: rgba(255, 93, 115, 0.1);
+        border: 1px solid rgba(255, 93, 115, 0.45);
+        border-radius: 8px;
+        padding: 9px 12px;
+        font-size: 12.5px;
+        color: #ffc4cc;
+      }
+
+      #legend {
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        background: rgba(22, 27, 37, 0.9);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 11px;
+        font-size: 12px;
+        color: var(--ink-dim);
+        display: grid;
+        gap: 5px;
+      }
+
+      #legend .k { display: flex; align-items: center; gap: 7px; }
+      #legend svg { flex: none; }
+
+      /* ---------- sidebar ---------- */
+
+      aside {
+        border-left: 1px solid var(--line);
+        background: var(--panel);
+        overflow-y: auto;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      section.block {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-2);
+        padding: 11px;
+      }
+
+      section.block > h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+        color: var(--ink-faint);
+        font-weight: 600;
+      }
+
+      section.gap-block { border-color: rgba(255, 93, 115, 0.45); }
+      section.gap-block > h3 { color: #ff8f9f; }
+
+      dl.facts {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 3px 10px;
+        font-size: 12.5px;
+      }
+
+      dl.facts dt { color: var(--ink-dim); }
+      dl.facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+      .note {
+        font-size: 12px;
+        color: var(--ink-faint);
+        margin: 8px 0 0;
+        line-height: 1.4;
+      }
+
+      /* Capped so the concept panel and the counts below it stay reachable: a posting
+         with thirty gaps would otherwise push everything else off the pane. */
+      ul.gaps {
+        list-style: none;
+        margin: 0;
+        padding: 0 4px 0 0;
+        display: grid;
+        gap: 3px;
+        max-height: 290px;
+        overflow-y: auto;
+      }
+
+      ul.gaps li > button {
+        width: 100%;
+        text-align: left;
+        background: rgba(255, 93, 115, 0.09);
+        border: 1px solid rgba(255, 93, 115, 0.25);
+        color: #ffc4cc;
+        font-size: 12.5px;
+        padding: 4px 8px;
+      }
+
+      ul.gaps .evidence {
+        display: none;
+        color: var(--ink-dim);
+        font-size: 11.5px;
+        padding: 5px 8px 7px;
+        border-left: 2px solid rgba(255, 93, 115, 0.35);
+        margin: 3px 0 5px 6px;
+      }
+
+      ul.gaps li.open .evidence { display: block; }
+
+      .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+      .chip {
+        background: rgba(255, 138, 61, 0.14);
+        border: 1px solid rgba(255, 138, 61, 0.4);
+        color: var(--hot-2);
+        border-radius: 999px;
+        padding: 1px 9px;
+        font-size: 12px;
+      }
+
+      .neighbours { display: grid; gap: 2px; font-size: 12.5px; margin-top: 8px; }
+
+      .neighbours .n {
+        display: grid;
+        grid-template-columns: 12px 1fr auto;
+        gap: 7px;
+        align-items: center;
+        cursor: pointer;
+        padding: 1px 2px;
+        border-radius: 4px;
+      }
+
+      .neighbours .n:hover { background: #232a3a; }
+      .neighbours .n em { font-style: normal; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      .tag-authored { color: var(--authored); }
+      .tag-inferred { color: var(--ink-faint); }
+
+      .empty { color: var(--ink-faint); font-size: 12.5px; }
+      code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--ink-dim); }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <h1>JobPilot concept map</h1>
+      <span class="sub" id="headline">paste a job description to begin</span>
+      <span class="spacer"></span>
+      <button id="back" style="display: none">New posting</button>
+    </header>
+
+    <div id="entry">
+      <div class="card">
+        <h2>Job description</h2>
+        <p>
+          Every concept in the corpus is drawn, whether the posting mentioned it or not.
+          Most real postings resolve almost nothing — that is the expected result, and the
+          things the posting asked for that the corpus cannot answer are listed beside the
+          map.
+        </p>
+        <textarea id="text" spellcheck="false" placeholder="Paste the posting here…"></textarea>
+        <div class="row">
+          <button class="primary" id="submit">Map it</button>
+          <span id="status"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="map">
+      <div id="stage">
+        <canvas id="canvas"></canvas>
+        <div id="controls">
+          <label><input type="checkbox" id="showAuthored" checked /> authored edges</label>
+          <label><input type="checkbox" id="showInferred" checked /> inferred edges</label>
+          <label><input type="checkbox" id="showAllLabels" /> all labels</label>
+          <button id="reheat">Re-run layout</button>
+        </div>
+        <div id="legend"></div>
+        <div id="banner" style="display: none"></div>
+      </div>
+      <aside id="sidebar"></aside>
+    </div>
+
+    <script type="module">
+      import { buildViewModel, neighboursOf } from './graph-view-model.js';
+
+      const el = (id) => document.getElementById(id);
+      const entry = el('entry');
+      const mapPane = el('map');
+      const statusLine = el('status');
+      const canvas = el('canvas');
+      const ctx = canvas.getContext('2d');
+
+      /** @type {ReturnType<typeof buildViewModel> | null} */
+      let vm = null;
+      let sim = null;
+      let selected = null;
+      let hovered = null;
+
+      /* ------------------------------------------------------------------ submit */
+
+      el('submit').addEventListener('click', run);
+      el('back').addEventListener('click', () => {
+        mapPane.classList.remove('on');
+        entry.style.display = 'flex';
+        el('back').style.display = 'none';
+        el('headline').textContent = 'paste a job description to begin';
+        history.replaceState(null, '', location.pathname);
+      });
+
+      el('text').addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void run();
+      });
+
+      const deepLink = new URLSearchParams(location.search).get('submission');
+      if (deepLink !== null) void reopen(deepLink);
+
+      async function run() {
+        const text = el('text').value.trim();
+        if (text === '') {
+          fail('Paste a job description first.');
+          return;
+        }
+        el('submit').disabled = true;
+        say('Extracting and resolving…');
+        try {
+          const submission = await postJson('/jd-submissions', { text });
+          say('Building the graph…');
+          const graph = await getJson(
+            `/jd-submissions/${encodeURIComponent(submission.submissionId)}/graph`,
+          );
+          say('');
+          remember(submission);
+          history.replaceState(null, '', `?submission=${submission.submissionId}`);
+          show(buildViewModel(graph, submission));
+        } catch (error) {
+          fail(String(error.message ?? error));
+        } finally {
+          el('submit').disabled = false;
+        }
+      }
+
+      /**
+       * Reopen a stored graph from `?submission=<id>`.
+       *
+       * The graph endpoint is a database read, while submitting re-runs extraction --
+       * seconds of LLM work that also sometimes fails. Being able to come back to a map
+       * without paying for it again is worth the one caveat this carries: the graph
+       * endpoint has no unresolved items, so on a cold browser the gap list is missing,
+       * and the sidebar says so rather than showing an empty list. Within a browser
+       * session it survives, cached beside the id.
+       */
+      async function reopen(submissionId) {
+        say('Loading stored graph…');
+        try {
+          const graph = await getJson(`/jd-submissions/${encodeURIComponent(submissionId)}/graph`);
+          say('');
+          show(buildViewModel(graph, recall(submissionId)));
+        } catch (error) {
+          fail(String(error.message ?? error));
+        }
+      }
+
+      function remember(submission) {
+        try {
+          sessionStorage.setItem(
+            `jobpilot:${submission.submissionId}`,
+            JSON.stringify(submission),
+          );
+        } catch {
+          // A full or disabled session store costs the gap list on reload, nothing more.
+        }
+      }
+
+      function recall(submissionId) {
+        try {
+          const raw = sessionStorage.getItem(`jobpilot:${submissionId}`);
+          return raw === null ? null : JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      }
+
+      function say(message) {
+        statusLine.classList.remove('bad');
+        statusLine.textContent = message;
+      }
+
+      function fail(message) {
+        statusLine.classList.add('bad');
+        statusLine.textContent = message;
+      }
+
+      async function postJson(url, body) {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        return await unwrap(response);
+      }
+
+      async function getJson(url) {
+        return await unwrap(await fetch(url));
+      }
+
+      async function unwrap(response) {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          const detail = payload?.message ?? response.statusText;
+          throw new Error(`${response.status}: ${detail}`);
+        }
+        return payload;
+      }
+
+      /* ------------------------------------------------------------------- show */
+
+      function show(model) {
+        vm = model;
+        selected = null;
+        hovered = null;
+        entry.style.display = 'none';
+        mapPane.classList.add('on');
+        el('back').style.display = '';
+        el('headline').textContent =
+          `${vm.stats.nodes} concepts · ${vm.matchedCount} matched · ` +
+          `${vm.unresolved.length} asked for and not in the corpus`;
+        drawLegend();
+        renderSidebar();
+        renderBanner();
+        sim = createSimulation(vm);
+        resize();
+        tick();
+      }
+
+      /* -------------------------------------------------------------- simulation */
+
+      /**
+       * A plain spring embedder. 67 concepts is 2,211 pairs a frame, so the naive
+       * all-pairs repulsion is cheap enough that a quadtree would only add code.
+       *
+       * The start positions come from a seeded generator rather than Math.random: the
+       * graph endpoint returns an identical response for a submission every time, and a
+       * map that rearranged itself on reload would hide that.
+       */
+      function createSimulation(model) {
+        const random = seeded(0x5eed);
+        const nodes = model.nodes.map((node, index) => {
+          const angle = (index / model.nodes.length) * Math.PI * 2;
+          const radius = 160 + random() * 120;
+          return {
+            ref: node,
+            x: Math.cos(angle) * radius,
+            y: Math.sin(angle) * radius,
+            vx: 0,
+            vy: 0,
+            r: 3.5 + Math.sqrt(node.relevance) * 9,
+            pinned: false,
+          };
+        });
+        const index = new Map(nodes.map((node) => [node.ref.conceptId, node]));
+        const springs = [
+          ...model.authoredEdges.map((edge) => ({
+            s: index.get(edge.a),
+            t: index.get(edge.b),
+            kind: 'authored',
+            strength: edge.strength,
+            length: 70,
+            k: 0.055,
+          })),
+          ...model.inferredEdges.map((edge) => ({
+            s: index.get(edge.a),
+            t: index.get(edge.b),
+            kind: 'inferred',
+            strength: edge.strength,
+            length: 150,
+            k: 0.006,
+          })),
+        ];
+        return {
+          nodes,
+          index,
+          springs,
+          alpha: 1,
+          fitted: false,
+          view: { x: 0, y: 0, scale: 1 },
+        };
+      }
+
+      function seeded(seed) {
+        let state = seed >>> 0;
+        return () => {
+          state = (state * 1664525 + 1013904223) >>> 0;
+          return state / 4294967296;
+        };
+      }
+
+      function step() {
+        const { nodes, springs } = sim;
+        const alpha = sim.alpha;
+
+        for (let i = 0; i < nodes.length; i++) {
+          const a = nodes[i];
+          for (let j = i + 1; j < nodes.length; j++) {
+            const b = nodes[j];
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let d2 = dx * dx + dy * dy;
+            if (d2 < 1) {
+              dx = 0.5;
+              dy = 0.5;
+              d2 = 0.5;
+            }
+            const force = (2600 * alpha) / d2;
+            const d = Math.sqrt(d2);
+            const fx = (dx / d) * force;
+            const fy = (dy / d) * force;
+            a.vx -= fx;
+            a.vy -= fy;
+            b.vx += fx;
+            b.vy += fy;
+          }
+        }
+
+        for (const spring of springs) {
+          const dx = spring.t.x - spring.s.x;
+          const dy = spring.t.y - spring.s.y;
+          const d = Math.hypot(dx, dy) || 0.01;
+          const pull = (d - spring.length) * spring.k * alpha;
+          const fx = (dx / d) * pull;
+          const fy = (dy / d) * pull;
+          spring.s.vx += fx;
+          spring.s.vy += fy;
+          spring.t.vx -= fx;
+          spring.t.vy -= fy;
+        }
+
+        for (const node of nodes) {
+          // Gravity keeps the concepts nothing links to from drifting off the canvas.
+          node.vx -= node.x * 0.004 * alpha;
+          node.vy -= node.y * 0.004 * alpha;
+          if (node.pinned) {
+            node.vx = 0;
+            node.vy = 0;
+            continue;
+          }
+          node.vx *= 0.82;
+          node.vy *= 0.82;
+          node.x += node.vx;
+          node.y += node.vy;
+        }
+
+        sim.alpha = Math.max(sim.alpha * 0.994, 0.02);
+        // Once the layout has stopped moving much, frame it. Without this the graph
+        // settles into whatever absolute size the force constants happen to produce and
+        // sits as a small knot in the middle of a large canvas -- which it did, using
+        // about a third of the width.
+        if (!sim.fitted && sim.alpha < 0.08) {
+          sim.fitted = true;
+          fitView();
+        }
+      }
+
+      /** Scale and centre the view so the whole graph fills the canvas with a margin. */
+      function fitView() {
+        if (sim === null || sim.nodes.length === 0) return;
+        const dpr = window.devicePixelRatio || 1;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const node of sim.nodes) {
+          minX = Math.min(minX, node.x);
+          maxX = Math.max(maxX, node.x);
+          minY = Math.min(minY, node.y);
+          maxY = Math.max(maxY, node.y);
+        }
+        const width = canvas.width / dpr;
+        const height = canvas.height / dpr;
+        // Room for the control bar, the legend and the labels, which sit outside the
+        // node positions the bounding box is measured from.
+        const pad = 90;
+        const scale = Math.min(
+          (width - pad * 2) / Math.max(1, maxX - minX),
+          (height - pad * 2) / Math.max(1, maxY - minY),
+        );
+        sim.view.scale = Math.min(3, Math.max(0.3, scale));
+        sim.view.x = -(minX + maxX) / 2;
+        sim.view.y = -(minY + maxY) / 2;
+      }
+
+      function tick() {
+        if (sim === null) return;
+        step();
+        draw();
+        requestAnimationFrame(tick);
+      }
+
+      el('reheat').addEventListener('click', () => {
+        if (sim === null) return;
+        sim.alpha = 1;
+        sim.fitted = false;
+      });
+      for (const id of ['showAuthored', 'showInferred', 'showAllLabels']) {
+        el(id).addEventListener('change', () => draw());
+      }
+
+      /* ------------------------------------------------------------------ drawing */
+
+      /** Grey at relevance 0, warming to orange as the posting names it. */
+      function relevanceColour(relevance, alpha) {
+        if (relevance <= 0) return `rgba(112, 122, 143, ${alpha})`;
+        const t = Math.min(1, relevance);
+        const r = Math.round(150 + 105 * t);
+        const g = Math.round(140 + 69 * t - 40 * t * t);
+        const b = Math.round(150 - 89 * t);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+
+      function resize() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+        canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
+        if (sim !== null) {
+          fitView();
+          draw();
+        }
+      }
+
+      window.addEventListener('resize', resize);
+
+      /**
+       * Layout space to CSS pixels. Everything below the backing-store size is in CSS
+       * pixels, including the node coordinates -- mixing the two here silently halved
+       * the whole layout on a 2x display.
+       */
+      function toScreen(node) {
+        const dpr = window.devicePixelRatio || 1;
+        return {
+          x: canvas.width / (2 * dpr) + (node.x + sim.view.x) * sim.view.scale,
+          y: canvas.height / (2 * dpr) + (node.y + sim.view.y) * sim.view.scale,
+        };
+      }
+
+      function draw() {
+        if (sim === null) return;
+        const dpr = window.devicePixelRatio || 1;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+
+        const showAuthored = el('showAuthored').checked;
+        const showInferred = el('showInferred').checked;
+        const focus = selected ?? hovered;
+        const near = new Set();
+        if (focus !== null) {
+          near.add(focus);
+          for (const entry of vm.adjacency.get(focus) ?? []) near.add(entry.other);
+        }
+
+        // Inferred first and underneath: they are the guessed layer, and drawing them
+        // over the authored ones would let a computed link hide an asserted one.
+        if (showInferred) {
+          ctx.setLineDash([3, 4]);
+          for (const spring of sim.springs) {
+            if (spring.kind !== 'inferred') continue;
+            strokeSpring(spring, near, focus, 0.16, 0.75);
+          }
+          ctx.setLineDash([]);
+        }
+        if (showAuthored) {
+          for (const spring of sim.springs) {
+            if (spring.kind !== 'authored') continue;
+            strokeSpring(spring, near, focus, 0.55, 1.3);
+          }
+        }
+
+        for (const node of sim.nodes) {
+          const p = toScreen(node);
+          const dim = focus !== null && !near.has(node.ref.conceptId);
+          const alpha = dim ? 0.18 : 1;
+          const radius = node.r * Math.max(0.75, Math.min(1.25, sim.view.scale));
+          // Remembered for the label placement and the hit test below, which both need
+          // the radius actually drawn rather than the unscaled one.
+          node.drawn = radius;
+
+          if (node.ref.relevance > 0 && !dim) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, radius + 6, 0, Math.PI * 2);
+            ctx.fillStyle = relevanceColour(node.ref.relevance, 0.16);
+            ctx.fill();
+          }
+
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          if (node.ref.hasCorpus) {
+            // Material behind it: a solid disc.
+            ctx.fillStyle = relevanceColour(node.ref.relevance, alpha);
+            ctx.fill();
+          } else {
+            // Known only because another document links to it. Hollow and dashed, so a
+            // point with nothing behind it never reads like one that has material.
+            ctx.fillStyle = '#0e1117';
+            ctx.fill();
+            ctx.setLineDash([2, 2]);
+            ctx.lineWidth = 1.4;
+            ctx.strokeStyle = relevanceColour(node.ref.relevance, alpha * 0.9);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          if (node.ref.conceptId === selected) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, radius + 4, 0, Math.PI * 2);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+          }
+        }
+
+        const labelAll = el('showAllLabels').checked;
+        ctx.font = '11.5px ui-sans-serif, "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        // Labels are placed greedily, most relevant first, and one that would land on
+        // top of an already-placed label is dropped. Overlapping text was worse than
+        // missing text: two names on top of each other read as a third, wrong name.
+        // Seeded with the discs themselves, so a name never lands on top of another
+        // concept's point -- text over a node reads as that node's label.
+        const placed = sim.nodes.map((node) => {
+          const p = toScreen(node);
+          const r = (node.drawn ?? node.r) + 1;
+          return { x0: p.x - r, x1: p.x + r, y0: p.y - r, y1: p.y + r };
+        });
+        const candidates = sim.nodes
+          .filter((node) => {
+            const isFocus = near.has(node.ref.conceptId);
+            return labelAll || node.ref.relevance > 0 || isFocus;
+          })
+          .sort((a, b) => {
+            const aFocus = near.has(a.ref.conceptId) ? 1 : 0;
+            const bFocus = near.has(b.ref.conceptId) ? 1 : 0;
+            if (aFocus !== bFocus) return bFocus - aFocus;
+            return b.ref.relevance - a.ref.relevance;
+          });
+        for (const node of candidates) {
+          const p = toScreen(node);
+          const width = ctx.measureText(node.ref.name).width;
+          const radius = (node.drawn ?? node.r) + 4;
+          // Above the point first, below it as a fallback. One alternative recovers most
+          // of the names that a single fixed position loses in the dense middle.
+          const offsets = [-radius - 7, radius + 14];
+          let chosen = null;
+          for (const dy of offsets) {
+            const box = {
+              x0: p.x - width / 2 - 2,
+              x1: p.x + width / 2 + 2,
+              y0: p.y + dy - 9,
+              y1: p.y + dy + 3,
+            };
+            if (placed.some((other) => overlaps(box, other))) continue;
+            chosen = { dy, box };
+            break;
+          }
+          if (chosen === null) continue;
+          placed.push(chosen.box);
+          const isFocus = near.has(node.ref.conceptId);
+          const dim = focus !== null && !isFocus;
+          ctx.fillStyle = dim
+            ? 'rgba(230, 233, 239, 0.15)'
+            : node.ref.relevance > 0
+              ? '#ffd8ba'
+              : 'rgba(230, 233, 239, 0.62)';
+          ctx.fillText(node.ref.name, p.x, p.y + chosen.dy);
+        }
+      }
+
+      function overlaps(a, b) {
+        return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+      }
+
+      function strokeSpring(spring, near, focus, baseAlpha, width) {
+        const lit =
+          focus !== null &&
+          (spring.s.ref.conceptId === focus || spring.t.ref.conceptId === focus);
+        const dimmed = focus !== null && !lit;
+        const a = toScreen(spring.s);
+        const b = toScreen(spring.t);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineWidth = lit ? width + 0.6 : width;
+        const alpha = dimmed ? baseAlpha * 0.25 : lit ? 0.95 : baseAlpha;
+        ctx.strokeStyle =
+          spring.kind === 'authored'
+            ? `rgba(127, 178, 255, ${alpha})`
+            : `rgba(126, 140, 172, ${alpha})`;
+        ctx.stroke();
+      }
+
+      /* -------------------------------------------------------------- interaction */
+
+      let dragging = null;
+      let panning = null;
+
+      canvas.addEventListener('mousedown', (event) => {
+        const hit = nodeAt(event);
+        if (hit !== null) {
+          dragging = hit;
+          hit.pinned = true;
+          select(hit.ref.conceptId);
+        } else {
+          panning = { x: event.clientX, y: event.clientY, ox: sim.view.x, oy: sim.view.y };
+          select(null);
+        }
+        canvas.classList.add('dragging');
+      });
+
+      window.addEventListener('mousemove', (event) => {
+        if (sim === null) return;
+        if (dragging !== null) {
+          const dpr = window.devicePixelRatio || 1;
+          const rect = canvas.getBoundingClientRect();
+          dragging.x =
+            (event.clientX - rect.left - canvas.width / (2 * dpr)) / sim.view.scale -
+            sim.view.x;
+          dragging.y =
+            (event.clientY - rect.top - canvas.height / (2 * dpr)) / sim.view.scale -
+            sim.view.y;
+          return;
+        }
+        if (panning !== null) {
+          sim.view.x = panning.ox + (event.clientX - panning.x) / sim.view.scale;
+          sim.view.y = panning.oy + (event.clientY - panning.y) / sim.view.scale;
+          return;
+        }
+        const hit = nodeAt(event);
+        const next = hit === null ? null : hit.ref.conceptId;
+        if (next !== hovered) {
+          hovered = next;
+          if (selected === null) renderSidebar();
+        }
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (dragging !== null) dragging.pinned = false;
+        dragging = null;
+        panning = null;
+        canvas.classList.remove('dragging');
+      });
+
+      canvas.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+        sim.view.scale = Math.min(4, Math.max(0.3, sim.view.scale * factor));
+        draw();
+      }, { passive: false });
+
+      function nodeAt(event) {
+        if (sim === null) return null;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        let best = null;
+        let bestDistance = Infinity;
+        for (const node of sim.nodes) {
+          const p = toScreen(node);
+          const d = Math.hypot(p.x - x, p.y - y);
+          if (d < Math.max(9, (node.drawn ?? node.r) + 5) && d < bestDistance) {
+            best = node;
+            bestDistance = d;
+          }
+        }
+        return best;
+      }
+
+      function select(conceptId) {
+        selected = conceptId;
+        renderSidebar();
+        draw();
+      }
+
+      /* ------------------------------------------------------------------ sidebar */
+
+      function renderBanner() {
+        const banner = el('banner');
+        if (!vm.allUnmatched) {
+          banner.style.display = 'none';
+          return;
+        }
+        banner.style.display = '';
+        banner.textContent =
+          `Nothing in this posting resolved to any concept. All ${vm.stats.nodes} points are ` +
+          `at relevance 0, so this map is the corpus itself — the only thing it says about ` +
+          `this posting is on the right, under what the corpus cannot answer.`;
+      }
+
+      function drawLegend() {
+        el('legend').innerHTML = [
+          key(dot('rgba(255,138,61,1)', false), 'named by the posting'),
+          key(dot('rgba(112,122,143,1)', false), 'in the corpus, not named'),
+          key(dot('rgba(112,122,143,1)', true), `no material behind it (${vm.withoutCorpusCount})`),
+          key(line('#7fb2ff', false), `authored link (${vm.stats.authoredEdges})`),
+          key(line('#7e8cac', true), `inferred link (${vm.stats.inferredEdges})`),
+        ].join('');
+      }
+
+      function key(mark, label) {
+        return `<div class="k">${mark}<span>${escapeHtml(label)}</span></div>`;
+      }
+
+      function dot(colour, hollow) {
+        return hollow
+          ? `<svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="none" stroke="${colour}" stroke-width="1.4" stroke-dasharray="2 2"/></svg>`
+          : `<svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="${colour}"/></svg>`;
+      }
+
+      function line(colour, dashed) {
+        return `<svg width="16" height="16"><line x1="1" y1="8" x2="15" y2="8" stroke="${colour}" stroke-width="${dashed ? 1 : 1.6}" ${dashed ? 'stroke-dasharray="3 3"' : ''}/></svg>`;
+      }
+
+      function renderSidebar() {
+        const focusId = selected ?? hovered;
+        const focus =
+          focusId === null ? null : vm.nodes.find((node) => node.conceptId === focusId);
+        el('sidebar').innerHTML = [
+          gapsBlock(),
+          focusBlock(focus),
+          countsBlock(),
+        ].join('');
+
+        for (const item of document.querySelectorAll('ul.gaps li')) {
+          item.querySelector('button').addEventListener('click', () => {
+            item.classList.toggle('open');
+          });
+        }
+        for (const row of document.querySelectorAll('.neighbours .n')) {
+          row.addEventListener('click', () => select(row.dataset.concept));
+        }
+      }
+
+      function gapsBlock() {
+        if (!vm.unresolvedAvailable) {
+          return block(
+            'Asked for, not in the corpus',
+            '<p class="empty">Loaded from a stored graph, so the posting\'s unresolved items are not available.</p>',
+            true,
+          );
+        }
+        if (vm.unresolved.length === 0) {
+          return block(
+            'Asked for, not in the corpus',
+            '<p class="empty">Everything the posting named resolved to a concept.</p>',
+            true,
+          );
+        }
+        const items = vm.unresolved
+          .map(
+            (item) => `
+              <li>
+                <button>${escapeHtml(item.surface)}</button>
+                <div class="evidence">${
+                  item.evidence.length === 0
+                    ? 'No evidence span recorded.'
+                    : item.evidence.map((span) => `“${escapeHtml(span)}”`).join('<br />')
+                }</div>
+              </li>`,
+          )
+          .join('');
+        return block(
+          `Asked for, not in the corpus — ${vm.unresolved.length}`,
+          `<ul class="gaps">${items}</ul>
+           <p class="note">These are the things the posting named that no concept in the map
+           answers. They are the map's real content for a posting like this one; click one
+           for the wording it came from.</p>`,
+          true,
+        );
+      }
+
+      function focusBlock(focus) {
+        if (focus === undefined || focus === null) {
+          return block(
+            'Concept',
+            '<p class="empty">Hover a point, or click one to pin it.</p>',
+          );
+        }
+        const neighbours = neighboursOf(vm, focus.conceptId);
+        const rows =
+          neighbours.length === 0
+            ? '<p class="empty">No links at all.</p>'
+            : `<div class="neighbours">${neighbours
+                .map(
+                  (n) => `
+                    <div class="n" data-concept="${escapeHtml(n.conceptId)}">
+                      <span class="tag-${n.kind}">${n.kind === 'authored' ? '━' : '┄'}</span>
+                      <span>${escapeHtml(n.name)}</span>
+                      <em>${n.kind === 'authored' ? 'authored' : n.strength.toFixed(3)}</em>
+                    </div>`,
+                )
+                .join('')}</div>`;
+        const matched =
+          focus.matchedItems.length === 0
+            ? '<p class="empty">Not named by this posting.</p>'
+            : `<div class="chips">${focus.matchedItems
+                .map((item) => `<span class="chip">${escapeHtml(item)}</span>`)
+                .join('')}</div>`;
+        return block(
+          focus.name,
+          `<code>${escapeHtml(focus.conceptId)}</code>
+           <dl class="facts" style="margin-top:8px">
+             <dt>relevance</dt><dd>${focus.relevance.toFixed(3)}</dd>
+             <dt>corpus material</dt><dd>${focus.hasCorpus ? 'yes' : '<span style="color:var(--gap)">none</span>'}</dd>
+             <dt>authored links</dt><dd>${focus.authoredDegree}</dd>
+             <dt>inferred links</dt><dd>${focus.inferredDegree}</dd>
+           </dl>
+           <p class="note" style="margin-bottom:4px">matched by</p>${matched}
+           ${rows}`,
+        );
+      }
+
+      function countsBlock() {
+        const s = vm.summary;
+        return block(
+          'This map',
+          `<dl class="facts">
+             ${s === null ? '' : `
+               <dt>items extracted</dt><dd>${s.total}</dd>
+               <dt>resolved exactly</dt><dd>${s.exact}</dd>
+               <dt>unresolved</dt><dd>${s.unresolved}</dd>`}
+             <dt>concepts</dt><dd>${vm.stats.nodes}</dd>
+             <dt>… named by the posting</dt><dd>${vm.matchedCount}</dd>
+             <dt>… with no material</dt><dd>${vm.withoutCorpusCount}</dd>
+             <dt>authored edges</dt><dd>${vm.stats.authoredEdges}</dd>
+             <dt>inferred edges</dt><dd>${vm.stats.inferredEdges}</dd>
+             <dt>mean degree</dt><dd>${vm.stats.meanDegree.toFixed(2)}</dd>
+             <dt>inferred cut</dt><dd>${vm.stats.inferredCut === null ? '—' : vm.stats.inferredCut.toFixed(4)}</dd>
+           </dl>
+           <p class="note">Similarity threshold: ${escapeHtml(vm.thresholdLabel)}</p>`,
+        );
+      }
+
+      function block(title, body, isGap) {
+        return `<section class="block${isGap ? ' gap-block' : ''}">
+                  <h3>${escapeHtml(title)}</h3>${body}
+                </section>`;
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(
+          /[&<>"']/g,
+          (character) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character],
+        );
+      }
+    </script>
+  </body>
+</html>

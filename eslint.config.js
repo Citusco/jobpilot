@@ -20,7 +20,10 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['*.js', '*.ts', 'scripts/*.mjs'],
+          // `public/*.js` ships to the browser as plain JavaScript, so it is outside the
+          // TypeScript program the rest of the repo compiles as; it is typed by the
+          // hand-written `.d.ts` beside it, which tsconfig does include.
+          allowDefaultProject: ['*.js', '*.ts', 'scripts/*.mjs', 'public/*.js'],
         },
         tsconfigRootDir: import.meta.dirname,
       },

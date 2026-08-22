@@ -1751,3 +1751,58 @@ says must not be built. The requirement is recorded at the top of
 `tests/unit/resolve/resolve-tier2.test.ts` as the first test to write when a calibration ever
 produces a number — nearest-match fallback being the single most likely way tier 2 gets built
 wrong, since it is what every vector-search example does by default and it looks like it works.
+
+## 2026-08-22 — Implementation decisions settled while building SCRUM-47 (the concept map client)
+
+The brief settled the big ones: one static page served by the existing NestJS app, no framework,
+no build step, no new runtime dependency, a hand-written force layout, and the four properties
+that must be visible. These are the calls it did not make.
+
+**The transform is a module with a hand-written `.d.ts`, not script inside the page.** Everything
+between the two API responses and the drawing — degree counting per edge kind, the unresolved
+list, the threshold sentence, the neighbour ordering — lives in `public/graph-view-model.js` and
+is covered by `tests/unit/concept-graph/graph-view-model.test.ts`. The browser needs it as plain
+JavaScript and the test needs it without a DOM, so it cannot be TypeScript compiled at build time
+(there is no build step) and it cannot be inline `<script>` (nothing could import it). The types
+therefore live in `public/graph-view-model.d.ts`, written by hand and added to `tsconfig.json`'s
+`include`; `eslint.config.js` gains `public/*.js` in `allowDefaultProject` for the same reason.
+The physics is deliberately *not* tested: a spring embedder has no correct answer to assert, and
+a test pinning particular coordinates would only pin the constants.
+
+**Unresolved items come from the submission response, not the graph.** `GET /:id/graph` carries
+no unresolved items and should not — an unresolved item resolved to no concept, so it is not a
+node. The page keeps the `POST` response alongside the graph and joins the two client-side. This
+is the only source, which has a consequence recorded below.
+
+**`?submission=<id>` reopens a stored graph, and says so when the gap list is missing.** The
+graph endpoint is a database read; submitting re-runs extraction, which takes tens of seconds and
+sometimes fails. Being able to return to a map without paying for it again is worth the caveat:
+on a cold browser there is no submission response, so the gap panel says the posting's unresolved
+items are unavailable rather than showing an empty list, which would read as "nothing was
+missing" — the exact opposite of the truth. Within one browser session the response is cached in
+`sessionStorage` beside the id and survives reload.
+
+**The layout is seeded and framed, not random.** Start positions come from a fixed-seed LCG
+rather than `Math.random`, because the graph endpoint is guaranteed identical across requests for
+a submission (FR-015) and a map that rearranged itself on every reload would hide that property
+instead of showing it. Once the simulation settles the view is scaled to fit the canvas; before
+that was added the graph sat as a knot in about a third of the width, which made the density look
+far higher than it is.
+
+**Labels are dropped rather than overlapped.** Names are placed greedily — focus first, then by
+relevance — above the point or, failing that, below it, and any that would collide with an
+already-placed name or with another concept's disc is not drawn. Two names on top of each other
+read as a third, wrong name, which is worse than a missing one. With 20 matched concepts in the
+dense middle this shows about 16 of them; the `all labels` toggle and zoom recover the rest.
+
+**Found while building: `toScreen` mixed device and CSS pixels**, so on a 2x display the whole
+layout drew at half scale. Recorded because it was invisible on a 1x display and only showed up
+against a real 67-node graph — the class of bug a screenshot catches and a unit test never would.
+
+**Found while building, and *not* a client concern: extraction rejects roughly a third of long
+postings.** `POST /jd-submissions` returns 502 intermittently — measured 3 failures in 7 attempts
+on the same ~1.5 KB posting — with agent-service reporting e.g. `evidence for 'gateway
+aggregation' is not a substring of the submitted text`. The model returns an evidence span with
+whitespace normalised, most readily where the posting hard-wraps a line, and the verbatim guard
+correctly refuses it. The guard is right; the retry story around it is missing. Not fixed here —
+it is an agent-service concern, and a client that silently retried would hide it.

@@ -14,6 +14,6 @@
     "noEmit": true,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "public/**/*.ts"],
   "exclude": ["src/generated/**"]
 }
