@@ -125,3 +125,100 @@ def test_raises_when_re_validation_fails_despite_a_successful_parse():
 
     with pytest.raises(AgentLLMError):
         node(GraphState(jd_text=JD_TEXT))
+
+
+WRAPPED_JD = (
+    "We are hiring a Backend Engineer. You will own gateway\n"
+    "aggregation across the estate, operate a Circuit Breaker around\n"
+    "third-party calls, and run Kubernetes in production."
+)
+
+
+def test_accepts_a_span_whose_only_difference_is_the_posting_s_line_wrapping():
+    # Measured: POST /jd-submissions failed roughly one time in three on long postings,
+    # because the model returns the span with the posting's hard line break collapsed to
+    # a space. The guard was right to refuse it -- the paraphrase check is the whole
+    # reason evidence can be trusted -- but a line break is not a paraphrase.
+    parsed = ItemsLLMOutput(
+        items=[
+            ExtractedItemLLM(
+                surface="gateway aggregation",
+                evidence=["own gateway aggregation across the estate"],
+            )
+        ]
+    )
+    node = make_extract_items_node(_fake_structured_model(parsed))
+
+    result = node(GraphState(jd_text=WRAPPED_JD))
+
+    # Stored as the posting wrote it, newline included: the caller's own substring check
+    # runs against the same text, and a stored span that is not literally in the posting
+    # cannot be located in it later.
+    assert result["items"][0].evidence == ["own gateway\naggregation across the estate"]
+    assert result["items"][0].evidence[0] in WRAPPED_JD
+
+
+def test_realigns_every_span_of_every_item_independently():
+    parsed = ItemsLLMOutput(
+        items=[
+            ExtractedItemLLM(
+                surface="Circuit Breaker",
+                evidence=[
+                    "operate a Circuit Breaker around third-party calls",
+                    "run Kubernetes in production.",
+                ],
+            )
+        ]
+    )
+    node = make_extract_items_node(_fake_structured_model(parsed))
+
+    result = node(GraphState(jd_text=WRAPPED_JD))
+
+    assert result["items"][0].evidence == [
+        "operate a Circuit Breaker around\nthird-party calls",
+        "run Kubernetes in production.",
+    ]
+    assert all(span in WRAPPED_JD for span in result["items"][0].evidence)
+
+
+def test_still_refuses_a_paraphrase_that_whitespace_cannot_explain():
+    # The relaxation is whitespace and nothing else. A span that differs in its words is
+    # still a paraphrase, and hard constraint 1 says it must fail here.
+    parsed = ItemsLLMOutput(
+        items=[
+            ExtractedItemLLM(
+                surface="gateway aggregation",
+                evidence=["owns gateway aggregation for the whole estate"],
+            )
+        ]
+    )
+    node = make_extract_items_node(_fake_structured_model(parsed))
+
+    with pytest.raises(AgentLLMError):
+        node(GraphState(jd_text=WRAPPED_JD))
+
+
+def test_leaves_a_span_that_already_matches_exactly_untouched():
+    parsed = ItemsLLMOutput(
+        items=[
+            ExtractedItemLLM(
+                surface="Kubernetes",
+                evidence=["run Kubernetes in production."],
+            )
+        ]
+    )
+    node = make_extract_items_node(_fake_structured_model(parsed))
+
+    result = node(GraphState(jd_text=WRAPPED_JD))
+
+    assert result["items"][0].evidence == ["run Kubernetes in production."]
+
+
+def test_refuses_a_span_that_is_only_whitespace():
+    parsed = ItemsLLMOutput.model_construct(
+        items=[ExtractedItemLLM.model_construct(surface="nothing", evidence=["   "])]
+    )
+    node = make_extract_items_node(_fake_structured_model(parsed))
+
+    with pytest.raises(AgentLLMError):
+        node(GraphState(jd_text=WRAPPED_JD))
