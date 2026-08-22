@@ -274,9 +274,11 @@ describe('GET /jd-submissions/:id/graph (contract)', () => {
   });
 
   it('reports no threshold until a calibration has produced one', async () => {
-    // contracts/http-api.md echoes the threshold with the baseline behind it. US3 has not
-    // run yet, so there is nothing to echo -- and a placeholder number is exactly the
-    // authoritative-looking fiction FR-018 and FR-019b exist to prevent.
+    // contracts/http-api.md echoes the threshold with the baseline behind it. The
+    // calibration has now run (docs/DECISIONS.md, 2026-08-22) and found no separation
+    // between its baselines, so there is no threshold in force to echo -- and a
+    // placeholder number is exactly the authoritative-looking fiction FR-018 and FR-019b
+    // exist to prevent. This assertion changes when a calibration produces one.
     const body = (await get(submissionId)).body as GraphBody;
     expect(body.threshold).toBeNull();
   });
