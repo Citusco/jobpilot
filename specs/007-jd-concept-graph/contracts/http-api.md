@@ -78,8 +78,11 @@ The whole concept graph for a submission, in one response.
 | `threshold` | Echoed with the baseline that produced it, so a floor derived from concept-document phrasing is never read as a verdict about real-world wording (FR-019b) |
 | `stats` | Lets a test assert the density target without recomputing it |
 
-**One response, always.** Measured at 12.4 KB for the full graph, so there is no pagination, no
-subgraph parameter and no lazy expansion. A caller that wants a subgraph filters client-side.
+**One response, always.** Measured at 34 KB for the full graph (34,491 bytes, 67 nodes and 335
+edges, 2026-08-22), so there is no pagination, no subgraph parameter and no lazy expansion. A
+caller that wants a subgraph filters client-side. The 12.4 KB the plan estimated covered node ids
+and authored edges only; the extra is the per-node name, corpus flag, relevance and matched-item
+list plus `kind` and `strength` on each edge, all of which the contract requires.
 
 **Identical across repeated requests** for the same submission (FR-015). Relevance derives from
 stored items and edges from stored vectors; nothing is sampled or time-dependent.

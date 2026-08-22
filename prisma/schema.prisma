@@ -62,7 +62,7 @@ model ExtractedItem {
 }
 
 // --- Corpus ingest foundation (specs/005-corpus-ingest-foundation) ---
-// Additive only: unrelated to JdSubmission/CandidateTrainingDirection above.
+// Additive only: unrelated to JdSubmission/ExtractedItem above.
 // conceptId/chunkId are stable, human-meaningful string primary keys (not
 // gen_random_uuid()) — see data-model.md for why.
 

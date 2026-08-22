@@ -1630,3 +1630,124 @@ It lives at `scripts/calibrate-threshold.ts` with the measurement logic split in
 satisfied in name only, FR-017's independence and FR-018's refusal to emit a number, are driven
 by unit tests rather than only by whatever the corpus happens to contain today. Tests are at
 `tests/unit/calibrate/`, not `corpus/tools/tests/`.
+
+## 2026-08-22 — `npm test` was silently emptying `doc_chunks` on every run
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T024), fixing a defect introduced in
+specs/006-corpus-structure-rebuild
+
+The corpus table emptied itself three times over two features with no apparent cause. A plain
+`scripts/ingest-corpus.ts` run persisted correctly, no migration was being replayed, and the
+integration tests looked like they cleaned up only their own fixtures. The cause is
+`tests/integration/ingest-corpus.test.ts`, "preserves total leaf byte coverage after a full
+ingest into the database".
+
+That test deliberately reads the **real** `corpus/_meta/chunks/azure.jsonl` — that is the point
+of it, proving the loader loses nothing on the way into Postgres. So its `testConceptIds` is not
+a fixture id but every one of the 49 real corpus concepts, and its `finally` block ran
+`docChunk.deleteMany({ where: { patternId: { in: testConceptIds } } })` — every chunk of every
+real concept. Concepts survived because their delete carries `addedFrom: 'test-fixture'`; the
+chunk delete had no equivalent guard, so the asymmetry left a database that looked half-intact
+and pointed at nothing in particular.
+
+Reproduced deliberately before fixing, because a green suite that destroys data is exactly the
+failure that hides: with the old teardown the suite reports `10 passed` and leaves `doc_chunks`
+at 0; with the fix it reports `10 passed` and leaves all 607 rows.
+
+**The rule this establishes.** A test's teardown may delete only what that test can prove it
+created. Deleting by a *selector* the test also shares with production data is not cleanup, it is
+a truncate with extra steps. Teardown now snapshots the chunk ids present before the ingest and
+removes only ids that were not there — on a populated database that is nothing at all, since
+`ingestChunks` is content-hash keyed and rewrites the same ids, and on an empty one it is all of
+them, which is equally "as found".
+
+The pattern generalises to the concept guard as well, which got this right by accident:
+`addedFrom: 'test-fixture'` is a provenance marker, and provenance is what makes "did this test
+create this row?" answerable. Where a table has no such marker, snapshot instead.
+
+## 2026-08-22 — SC-003 corrected from 12 KB to the measured 34 KB
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T024)
+
+SC-003 required the whole graph in one response "of roughly 12 KB, matching the measured size".
+No such measurement had been taken. The figure was estimated during planning against a payload
+that node ids and authored edges alone would produce — before `matchedItems`, `hasCorpus`,
+per-node relevance, and the 232 inferred edges that FR-013's density target requires all became
+part of the contract. The response as `contracts/http-api.md` specifies it measures **34,491
+bytes** for the 67-node, 335-edge graph, about 83 bytes per edge, all of it required to draw the
+map.
+
+The conclusion the number was supporting is untouched: one response, no pagination, no subgraph
+parameter, no lazy expansion. So the criterion is restated at the measured size rather than left
+standing as a success criterion the implementation knowingly fails. A repository that carries a
+criterion everyone has privately agreed to ignore is worse off than one that carries none — the
+next reader cannot tell which of the ten are real.
+
+Corrected in three places that all repeated the estimate: `spec.md` SC-003 (with the reason),
+`contracts/http-api.md`, and the doc comment on the graph endpoint. The integration test at
+`tests/integration/submit-to-graph.test.ts` already bounded the real size and explained the gap;
+it needed no change.
+
+## 2026-08-22 — `prisma migrate reset` was not run, and why that is acceptable here
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T024)
+
+T024 called for verification from a reset database. The Prisma CLI now refuses a destructive
+`migrate reset` when it detects it was invoked by an agent, and demands the user's own recorded
+words as consent. That refusal was respected rather than worked around.
+
+What T024 actually needed from the reset was that the migration chain applies to a schema nothing
+had hand-patched, and that the corpus rebuilds from source rather than from whatever happened to
+survive. Both were obtained without dropping the database: `prisma migrate status` reports 4
+migrations found and the schema up to date with no drift, and the corpus was rebuilt end to end
+from the raw sources — `chunk_azure.py` regenerating 607 chunk rows over 49 concept-eligible
+files, then `ingest-corpus.ts` replacing all 49 files' chunks and rebuilding all 147 terms.
+
+What was *not* re-proved is that the four migrations apply cleanly to an empty database in
+sequence. That is worth someone running once with consent before merge; it is the one claim in
+T024 that this verification does not support.
+
+## 2026-08-22 — Independent review of the resolution and calibration assertions (T025)
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T025)
+
+The test-reviewer subagent was asked, against the spec and the final code only, whether five
+assertions actually check what they claim or merely look like they do. Three came back adequate,
+two weak. Recorded because the two weak ones are the kind of finding that a green suite hides.
+
+**Adequate, confirmed by evidence not by assertion.** FR-017's non-circularity is tested for
+*both* circular sources independently — `tests/unit/calibrate/phrase-sampling.test.ts` asserts a
+preamble-only chunk yields zero phrases, and separately that every recorded name is masked out —
+so a leak of either kind fails a test. FR-013's target-degree edge selection is pinned by a
+synthetic distribution where every pairwise similarity sits below 0.44, which a hardcoded-0.44
+implementation would turn into an empty graph; the test asserts the real one still reaches the
+requested degree. The grey-concept rule is asserted at both the unit and the contract level.
+
+**Weak, and fixed: nothing tied the threshold in force back to a run.** Every test asserting "no
+threshold" read `SIMILARITY_THRESHOLD` from the generated `src/resolve/calibration.ts` directly.
+Hand-editing that file to `0.35` and flipping `separated` to `true` would have left the suite
+green — producing exactly the number-with-no-run-behind-it that FR-016 forbids and that the
+2026-08-11 correction is the precedent for. The refusal *mechanism* was well tested; the
+*artifact* was not tied to it.
+
+`calibrationModule()` moved out of `scripts/calibrate-threshold.ts` into
+`src/calibrate/calibration-module.ts` (the script's `void main()` would otherwise run on import),
+and `tests/unit/calibrate/calibration-module.test.ts` now re-renders the module from the
+committed record and compares it byte for byte, with a second case proving the generator does not
+simply always write null. Verified by deliberately editing the threshold to 0.35 and watching the
+test fail. This does not prove the record itself is honest — re-deriving it needs the database
+and 147 embedding calls, which a unit test must not make — but it raises the cost of a fabricated
+threshold from editing one literal to forging a 147-row record of per-phrase scores, and makes
+any drift between the two files a failure.
+
+**Weak, and deliberately not fixed: FR-008 cannot be tested until tier 2 exists.** No test proves
+a future tier 2 would reject a below-threshold nearest match rather than fall back to it, because
+no code computes a score to compare. Writing one now would mean building the tier the measurement
+says must not be built. The requirement is recorded at the top of
+`tests/unit/resolve/resolve-tier2.test.ts` as the first test to write when a calibration ever
+produces a number — nearest-match fallback being the single most likely way tier 2 gets built
+wrong, since it is what every vector-search example does by default and it looks like it works.

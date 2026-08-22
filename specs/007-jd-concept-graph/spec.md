@@ -22,7 +22,7 @@ and must not be followed.
 
 | Measured | Value | Consequence for this feature |
 |---|---|---|
-| Whole graph serialised | 12.4 KB (70 nodes, 107 authored edges) | Returned in one response — no pagination, no subgraph endpoint |
+| Whole graph serialised | 12.4 KB (70 nodes, 107 authored edges) — *superseded: the built response measures 34.5 KB over 67 nodes and 335 edges; see SC-003* | Returned in one response — no pagination, no subgraph endpoint |
 | Authored edges alone | mean degree 3.1, 4 isolated nodes | Too sparse to be useful on its own |
 | Concept-pair similarity | p5 0.248, p50 0.351, p95 0.484 | Narrow — edge count is extremely sensitive to the cut |
 | Union at similarity ≥ 0.44 | 346 edges, mean degree 9.9, 0 isolated | The density target |
@@ -260,8 +260,16 @@ number, then check that the chosen threshold falls between them.
   manual step. This has never been possible before.
 - **SC-002**: Every extracted item ends in exactly one of two states, resolved or unresolved.
   Neither silent omission nor forced assignment occurs in any test case.
-- **SC-003**: The complete graph is returned in a single response of roughly 12 KB, matching the
+- **SC-003**: The complete graph is returned in a single response of roughly 34 KB, matching the
   measured size. No client needs a second request to draw it.
+
+  *Corrected 2026-08-22, T024.* This criterion originally said 12 KB. That figure was estimated
+  against a payload shape that was never built — node ids and authored edges only, with no
+  `matchedItems`, no `hasCorpus`, and none of the 232 inferred edges the density target requires.
+  The response the contract actually specifies measures 34,491 bytes for the 67-node graph. The
+  conclusion the number was supporting — one response, no pagination, no subgraph parameter — is
+  unaffected, so the criterion is restated at the measured size rather than left as one the
+  implementation knowingly fails.
 - **SC-004**: The returned graph averages about ten connections per concept with no unconnected
   concept, against the 3.1 and four isolated concepts that the authored edges alone provide.
 - **SC-005**: Asserted and inferred connections are distinguishable in the response, and the

@@ -65,7 +65,7 @@ export class JdSubmissionsController {
    * The whole concept graph for a submission, in one response.
    *
    * No pagination, no subgraph parameter and no lazy expansion: the full graph measures
-   * around 12 KB, and a caller that wants part of it can filter client-side. Splitting it
+   * around 34 KB, and a caller that wants part of it can filter client-side. Splitting it
    * would cost a client the one thing the map is for -- seeing the unmatched majority
    * alongside the matched few.
    *

@@ -402,6 +402,20 @@ describe('scripts/ingest-corpus.ts (integration)', () => {
         .map((l) => JSON.parse(l));
       const testConceptIds = [...new Set(rows.map((r) => r.patternId))];
 
+      // Every chunk id already in the table before this test runs. The cleanup below
+      // removes only what this test added: `testConceptIds` is every real corpus
+      // concept, so deleting by pattern id wiped the entire ingested corpus on every
+      // `npm test` run -- concepts survived only because their delete is guarded by
+      // `addedFrom: 'test-fixture'` and the chunk delete had no equivalent guard.
+      const preexistingChunkIds = new Set(
+        (
+          await prisma.docChunk.findMany({
+            where: { patternId: { in: testConceptIds } },
+            select: { chunkId: true },
+          })
+        ).map((r) => r.chunkId),
+      );
+
       // Concepts referenced by these chunks must exist first (FK).
       for (const conceptId of testConceptIds) {
         await prisma.concept.upsert({
@@ -438,7 +452,21 @@ describe('scripts/ingest-corpus.ts (integration)', () => {
         expect(dbRows).toHaveLength(rows.length);
         expect(dbLeafBytes).toBe(jsonlLeafBytes);
       } finally {
-        await prisma.docChunk.deleteMany({ where: { patternId: { in: testConceptIds } } });
+        // Leave the table as it was found: drop only chunk ids this test introduced.
+        // On a populated database that is nothing at all -- ingestChunks is
+        // content-hash keyed and rewrites the same rows. On an empty one it is all of
+        // them, which is equally "as found".
+        const addedChunkIds = (
+          await prisma.docChunk.findMany({
+            where: { patternId: { in: testConceptIds } },
+            select: { chunkId: true },
+          })
+        )
+          .map((r) => r.chunkId)
+          .filter((id) => !preexistingChunkIds.has(id));
+        if (addedChunkIds.length > 0) {
+          await prisma.docChunk.deleteMany({ where: { chunkId: { in: addedChunkIds } } });
+        }
         await prisma.concept.deleteMany({ where: { conceptId: { in: testConceptIds }, addedFrom: 'test-fixture' } });
       }
     }, 60_000);

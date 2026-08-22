@@ -17,6 +17,20 @@ import { ResolveService } from '../../../src/resolve/resolve.service.js';
  * placeholders for the tier-2 tests -- they are the tests for the state the measurement
  * put the system in, and the first of them fails the moment a calibration produces a
  * number, which is the signal to write the tier-2 tests for real.
+ *
+ * WHEN THAT SIGNAL FIRES, write this test first. Independent review (2026-08-22, T025)
+ * correctly flagged that nothing here proves a future tier 2 would REJECT a
+ * below-threshold nearest match rather than fall back to it -- FR-008's actual
+ * prohibition. It cannot be proved today, because no code computes a score to compare,
+ * and a test asserting `conceptId === null` against a resolver with no similarity path
+ * at all is guarding a door in a wall with no doorway. The missing test:
+ *
+ *   mock `$queryRaw` to return concept vectors such that the best match scores just
+ *   BELOW a non-null threshold, then assert the outcome is `unresolved` carrying that
+ *   best score -- not the best-scoring concept.
+ *
+ * Nearest-match fallback is the single most likely way tier 2 gets built wrong, because
+ * it is what every vector-search example does by default and it looks like it works.
  */
 describe('ResolveService: the similarity tier', () => {
   const buildService = () => {
