@@ -114,18 +114,33 @@ describe('concepts/doc_chunks migration shape (contract)', () => {
     expect(pk.map((r) => r.column_name)).toEqual(['term']);
   });
 
-  it('leaves jd_submissions and candidate_training_directions untouched', async () => {
+  // This test used to assert that feature 006's migration left jd_submissions and
+  // candidate_training_directions untouched, which was true of that migration and is
+  // deliberately no longer true of the database: feature 007 drops the directions table
+  // and the six JdSubmission columns that only served the removed pipeline. The
+  // assertion is rewritten rather than deleted, because what it was really protecting --
+  // that a corpus migration does not silently reshape the submission tables -- is still
+  // worth stating, now against the shape those tables are supposed to have.
+  it('leaves jd_submissions with only the columns that survived the pipeline removal', async () => {
     const jdColumns = await prisma.$queryRaw<ColumnInfo[]>`
       SELECT column_name FROM information_schema.columns WHERE table_name = 'jd_submissions'
     `;
-    const directionColumns = await prisma.$queryRaw<ColumnInfo[]>`
-      SELECT column_name FROM information_schema.columns WHERE table_name = 'candidate_training_directions'
+
+    expect(jdColumns.map((c) => c.column_name).sort()).toEqual(['created_at', 'id', 'raw_text']);
+  });
+
+  it('has no candidate_training_directions table and no status column to gate on', async () => {
+    // FR-020 and FR-022: the sufficiency gate needs somewhere to record its verdict, and
+    // there is nowhere left.
+    const tables = await prisma.$queryRaw<Array<{ table_name: string }>>`
+      SELECT table_name FROM information_schema.tables WHERE table_name = 'candidate_training_directions'
     `;
-    expect(jdColumns.map((c) => c.column_name)).toEqual(
-      expect.arrayContaining(['id', 'raw_text', 'role', 'tech_stack', 'seniority', 'status']),
-    );
-    expect(directionColumns.map((c) => c.column_name)).toEqual(
-      expect.arrayContaining(['id', 'jd_submission_id', 'name', 'rationale']),
-    );
+    const statusColumns = await prisma.$queryRaw<ColumnInfo[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'jd_submissions' AND column_name IN ('status', 'rejection_reason')
+    `;
+
+    expect(tables).toEqual([]);
+    expect(statusColumns).toEqual([]);
   });
 });

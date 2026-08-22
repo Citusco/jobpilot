@@ -17,37 +17,52 @@ datasource db {
 }
 
 model JdSubmission {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  rawText           String   @map("raw_text")
-  role              String?
-  techStack         String[] @map("tech_stack")
-  seniority         String?
-  seniorityInferred Boolean  @default(false) @map("seniority_inferred")
-  status            String
-  rejectionReason   String?  @map("rejection_reason")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rawText   String   @map("raw_text")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  candidateTrainingDirections CandidateTrainingDirection[]
+  items ExtractedItem[]
 
   @@map("jd_submissions")
 }
 
-model CandidateTrainingDirection {
-  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  jdSubmissionId         String   @map("jd_submission_id") @db.Uuid
-  name                   String
-  rationale              String
-  tags                   String[]
-  suggestedQuestionCount Int      @map("suggested_question_count")
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+// One row per distinct technical phrase found in a submission, with its
+// resolution outcome (specs/007-jd-concept-graph/data-model.md).
+//
+// `tier` is not nullable and `conceptId` is: an unresolved item carries
+// tier = unresolved with a null concept, so the state is never inferred from
+// the null. `score` is null for `exact` -- writing 1.0 would record a
+// measurement that never happened.
+enum ResolutionTier {
+  exact
+  similarity
+  unresolved
+}
 
-  jdSubmission JdSubmission @relation(fields: [jdSubmissionId], references: [id], onDelete: Cascade)
+model ExtractedItem {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submissionId String         @map("submission_id") @db.Uuid
+  surface      String
+  normalized   String
+  evidence     String[]
+  conceptId    String?        @map("concept_id")
+  tier         ResolutionTier
+  score        Float?
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
-  @@map("candidate_training_directions")
+  submission JdSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  concept    Concept?     @relation(fields: [conceptId], references: [conceptId], onDelete: Restrict)
+
+  // FR-003 enforced structurally rather than by an application-code check:
+  // two mentions of the same phrase cannot become two rows.
+  @@unique([submissionId, normalized])
+  @@index([submissionId])
+  @@index([conceptId])
+  @@map("extracted_items")
 }
 
 // --- Corpus ingest foundation (specs/005-corpus-ingest-foundation) ---
-// Additive only: unrelated to JdSubmission/CandidateTrainingDirection above.
+// Additive only: unrelated to JdSubmission/ExtractedItem above.
 // conceptId/chunkId are stable, human-meaningful string primary keys (not
 // gen_random_uuid()) — see data-model.md for why.
 
@@ -82,6 +97,7 @@ model Concept {
 
   chunks DocChunk[]
   terms  ConceptTerm[]
+  items  ExtractedItem[]
 
   @@map("concepts")
 }

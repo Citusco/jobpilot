@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { embedResponseSchema } from './schemas/embed-response.schema.js';
-import { extractResponseSchema, type ExtractResponse } from './schemas/extract-response.schema.js';
+import { buildExtractResponseSchema, type ExtractResponse } from './schemas/extract-response.schema.js';
 
 const DEFAULT_AGENT_SERVICE_URL = 'http://localhost:8000';
 const TIMEOUT_MS = 30_000;
@@ -13,6 +13,22 @@ export class AgentOrchestrationUnavailableError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = 'AgentOrchestrationUnavailableError';
+  }
+}
+
+/**
+ * The service could not be reached at all -- connection refused, DNS failure, or a
+ * timeout -- as opposed to reaching it and getting back something unusable.
+ *
+ * A subclass rather than a sibling so every existing `instanceof
+ * AgentOrchestrationUnavailableError` handler keeps working. The distinction exists
+ * because the two cases deserve different statuses at the HTTP edge: 503 for "nothing
+ * answered", 502 for "something answered badly" (contracts/http-api.md).
+ */
+export class AgentOrchestrationUnreachableError extends AgentOrchestrationUnavailableError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'AgentOrchestrationUnreachableError';
   }
 }
 
@@ -32,7 +48,7 @@ export class AgentOrchestrationClient {
         signal: controller.signal,
       });
     } catch (error) {
-      throw new AgentOrchestrationUnavailableError('Failed to reach the agent orchestration service', {
+      throw new AgentOrchestrationUnreachableError('Failed to reach the agent orchestration service', {
         cause: error,
       });
     } finally {
@@ -46,7 +62,10 @@ export class AgentOrchestrationClient {
     }
 
     const json: unknown = await response.json();
-    const parsed = extractResponseSchema.safeParse(json);
+    // The schema is built from the text we submitted, because it asserts that every
+    // evidence span is a substring of it -- a paraphrased span fails here rather than
+    // being stored as evidence that cannot be found in the posting it claims to quote.
+    const parsed = buildExtractResponseSchema(text).safeParse(json);
     if (!parsed.success) {
       throw new AgentOrchestrationUnavailableError('Agent orchestration service returned an invalid response', {
         cause: parsed.error,
@@ -70,7 +89,7 @@ export class AgentOrchestrationClient {
         signal: controller.signal,
       });
     } catch (error) {
-      throw new AgentOrchestrationUnavailableError('Failed to reach the agent orchestration service', {
+      throw new AgentOrchestrationUnreachableError('Failed to reach the agent orchestration service', {
         cause: error,
       });
     } finally {

@@ -1326,3 +1326,428 @@ separate it from the noise.
 - None of the five is ingested today, so nothing is broken now. The constraint is on what may be
   admitted later, not on what exists.
 **Status**: active
+
+## 2026-08-21 — Implementation decisions settled while building SCRUM-45 US1, not fixed by the spec
+
+Five points came up building T001–T011 that spec.md, plan.md and the two contracts did not
+settle, plus one place where the implementation diverges from what a contract says.
+
+**1. The evidence-is-a-substring rule is enforced on both sides of the wire, not one.**
+contracts/extract.md states it as a field rule of `/extract`, and plan.md's Constitution Re-Check
+assigns it to the Zod schema. Both are implemented: the extraction node checks each span against
+`state.jd_text` and raises `AgentLLMError` (502), and `buildExtractResponseSchema` checks it again
+against the submitted text. This is not redundancy for its own sake — each side is the last chance
+to catch it before the value crosses out of that side's control, and the failure it prevents is
+the one that hard constraint 1 exists for: a paraphrased span is stored as `evidence` and can
+never be found in the posting it claims to quote. Drift between the two checks is benign, since
+both are the same one-line containment test with no normalisation to disagree about.
+
+**2. The Zod response schema became a factory rather than a constant.** `buildExtractResponseSchema(submittedText)`
+returns the schema. The substring assertion cannot be made without the text, and Zod 3 has no
+parse-time context to pass it through, so binding it at construction is the only shape available.
+The client builds the schema per call.
+
+**3. Merging repeated mentions happens in the service, not at the database.**
+`@@unique([submissionId, normalized])` would reject the second row and take its evidence with it,
+which is the opposite of what FR-003 asks for. The service merges by normalised phrase before
+writing; the constraint remains the backstop. The first surface form seen wins — one of two
+spellings has to be the one displayed, and the posting's first use is as defensible a choice as
+any, provided it is deterministic. Two phrases that both normalise to the empty string therefore
+collapse into one item, which is correct: the constraint would otherwise reject the second.
+
+**4. The unavailable error gained a subclass, so 502 and 503 are actually distinguishable.**
+contracts/http-api.md specifies `502` for "the inference service failed or returned a malformed
+result" and `503` for "unreachable", but the existing client threw one error for both, so the
+documented distinction was unreachable. `AgentOrchestrationUnreachableError extends
+AgentOrchestrationUnavailableError` is thrown from the `fetch` catch — connection refused, DNS
+failure, timeout — and every existing `instanceof AgentOrchestrationUnavailableError` handler
+keeps working unchanged. A timeout counts as unreachable.
+
+**5. The client's extract tests moved from `tests/unit/` to `tests/contract/extract.contract.test.ts`.**
+tasks.md T006 names that path, which did not exist; the tests lived in
+`tests/unit/agent-orchestration/agent-orchestration.client.test.ts`. They now sit beside
+`embed.contract.test.ts`, which they mirror exactly — both stub `fetch` and assert the
+cross-service contract.
+
+**6. A feature-006 assertion was rewritten rather than deleted.**
+`tests/contract/concept-doc-chunk-schema.test.ts` asserted that the corpus migration left
+`jd_submissions` and `candidate_training_directions` untouched. That was true of that migration
+and is deliberately false of the database now. What the assertion protected — that a migration
+does not silently reshape the submission tables — is still worth stating, so it was restated
+against the shape those tables are supposed to have, including that no `status` or
+`rejection_reason` column survives for a sufficiency gate to record a verdict in (FR-022).
+
+**Measured end to end** on 2026-08-21, real provider, real corpus, 2,284-character posting for a
+senior backend platform role: 47 items extracted, 12 `exact`, 35 `unresolved`, 0 `similarity`
+(tier 2 does not exist yet). No non-technical requirement became an item — citizenship, salary,
+hybrid working and the recruiter note were all correctly left out. `rate limiting` and
+`throttling` both appeared and resolved to their own concepts, as designed.
+
+The unresolved list is the informative part, and it splits in two. Some are genuinely outside an
+Azure-patterns corpus — Terraform, Kafka, PostgreSQL, gRPC, PCI-DSS. Others are concepts the
+corpus **does** hold under a different name: `publish/subscribe model` against `publisher-subscriber`,
+`API gateway` against the four gateway patterns, `bulkhead isolation` against `bulkhead`,
+`strangler fig migration` against `strangler-fig`. That second group is precisely the population
+tier 2 exists to recover, and it is now visible as a measurement rather than an argument.
+**Status**: active
+
+## 2026-08-22 — Implementation decisions settled while building SCRUM-45 US2 (the graph endpoint)
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph, tasks T012–T016
+
+Six things the spec, plan and contract did not settle, or settled wrongly.
+
+**1. Relevance is the strongest single item that resolved to a concept, and it does not
+propagate along edges.** An `exact` item contributes 1 — it is a recorded name, not a
+measurement — and a `similarity` item contributes its score; a concept nothing resolved to is
+0 (FR-011). Two decisions are folded into that. Repetition does not raise relevance, because
+counting mentions would make a posting's repetitiveness look like emphasis. And relevance is
+not diffused to neighbours, because the diffusion rate would be a number nobody has measured,
+arriving in a response field that looks measured. The edges are already in the payload; a
+client that wants neighbourhood weighting can compute it and own the choice.
+
+**2. The inferred cut is a target mean degree of 10, not a similarity value.** FR-013 requires
+this and the distribution explains why: concept-pair similarity across the 70 real vectors is
+narrow — p5 0.248, p50 0.351, p95 0.484 — so a fixed cut sits inside the bulk, where a small
+change in how vectors are built moves the edge count enormously. Edges are taken in descending
+similarity until the target is reached, authored edges counting towards it, then any concept
+still unconnected is given its single best remaining edge. On today's corpus the target lands
+on 0.4384, close to the 0.44 measured by hand — but as an outcome, not an input.
+
+**3. A pair that is both asserted and similar is reported once, as authored.** FR-012 forbids
+merging the two kinds; it does not say what to do when both apply. Authored wins because a
+document asserting a relationship is the stronger claim, and emitting the pair twice would
+inflate the density and leave a client unable to say what it is looking at.
+
+**4. `index` is excluded from the graph; `overview` and `patterns` are not.** `index` is an
+Azure Architecture Center navigation page admitted through a `related` edge from `microservices`
+and `throttling`. It has no material, and its vector — built from the word "index" alone — is
+0.7135 similar to `index-table`, the single strongest pair in the corpus and completely
+meaningless. FR-023 already calls for it to go, so `src/corpus/non-concept-ids.ts` excludes it
+where the graph is derived. `overview` and `patterns` are the same kind of page and are
+deliberately left in: excluding them would be a corpus admission call, and admission is a human
+decision, not an engineering operation (CLAUDE.md hard constraint 7). The durable fix is an
+exclusion rule in corpus admission; the graph-side list is the interim, and node count is 69
+rather than the 70 tasks.md assumes.
+
+**5. `threshold` is null, not a placeholder.** contracts/http-api.md shows the field populated,
+but the calibration that produces it is US3 and has not run. A number there would be read as a
+measurement — the exact failure FR-018 and FR-019b exist to prevent — so the field says there
+is nothing to echo. `stats.inferredCut` was added alongside it: the graph's own cut is a
+different quantity from the resolution threshold and hiding it would make the density
+unauditable from the response.
+
+**6. The response is about 35 KB, not the 12.4 KB the plan recorded.** 12.4 KB is roughly what
+the node ids and edge pairs alone come to. The response contracts/http-api.md specifies also
+carries a name, a corpus flag, a relevance and a matched-item list per node, and `kind` plus
+`strength` on each of ~345 edges — around 83 bytes an edge. Inferred `strength` is rounded to
+four decimals, as the contract's own examples write it, which saves about 3 KB of float noise.
+The conclusion the 12.4 KB figure supported still holds — one response, no pagination, no
+subgraph parameter — so the tests assert the measured size rather than the planned one.
+
+**Measured end to end** on 2026-08-22 against the running service and the real corpus, a
+five-item posting fetched through `GET /jd-submissions/:id/graph`: 69 nodes (20 of them grey),
+105 authored edges, 240 inferred, mean degree 10.0, inferred cut 0.4384, 0 isolated concepts,
+35,543 bytes. `rate limiting` resolved to `rate-limiting` at tier 1 and `throttling` sits one
+authored edge away from it — the neighbour the colloquial phrase probably meant, surfaced by
+the graph rather than by overriding an exact match.
+
+**A test-isolation hazard surfaced, not introduced.** `tests/integration/ingest-corpus.test.ts`
+creates and deletes `test-concept-*` rows while Jest runs suites in parallel, so any assertion
+against a live concept count is a race against another file. The new tests exclude that prefix
+and, where a count is unavoidable, sandwich the request between two reads. Worth fixing at the
+source later; it is not specific to this feature.
+
+## 2026-08-22 — Measured: grey concept vectors are degenerate, so they do not generate inferred edges
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (US2), measured against the shipped endpoint
+**Supersedes**: item 4 of the 2026-08-22 SCRUM-45 US2 entry above, on `overview` and `patterns`
+
+**The measurement.** Fetching the graph for a live submission and analysing the payload:
+
+```
+inferred edges          240 total
+  grey-to-grey           69   (28.7%)
+  random expectation           8.1%   -> 3.5x over-represented
+highest-degree nodes    auto-scaling 30, caching 24, high-performance-computing 19,
+                        patterns 19, messaging 18   -- five of the top eight were grey
+```
+
+**The cause is structural, not a data slip.** A grey concept has no source material, so its
+vector is built from its name and terms alone. Short generic nouns — `caching`, `messaging`,
+`patterns`, `overview` — therefore embed near one another *because they are short generic
+nouns*, not because the concepts relate. The effect is not a few bad edges; it makes the
+densest region of the point cloud the region with nothing behind it, where every node opens to
+an empty concept. That is the opposite of the property the map exists to have.
+
+**The rule**: inferred edges are computed only between concepts that have material. Grey
+concepts stay in the graph and keep every authored edge — those were written by a document
+author and are real — but they no longer receive edges derived from a degenerate vector.
+Dropping the nodes would be the wrong fix: a grey node exists precisely to show that something
+is known and unmaterialised.
+
+This is FR-010's reasoning applied to edges rather than to matching. The requirement says a
+representation built from a name alone must not be judged against the same threshold as one
+built from real text; it holds identically for what that representation is allowed to assert
+about relatedness.
+
+**Both strategies measured against the real vectors**, choosing the cut by target mean degree
+in each case, with the three navigation pages excluded:
+
+```
+                          cut     inferred   union   mean degree   isolated
+all concepts             0.435       270       334       9.97          0
+material-bearing only    0.401       268       331       9.88          0
+```
+
+Nearly identical density — but in the second, every inferred edge joins two concepts a user can
+actually open. 0.401 is not hardcoded anywhere: the cut is still chosen to hit the target
+degree, and it moved *because* the candidate pool changed. That is the behaviour FR-013 asks
+for, visible in a real measurement.
+
+**`overview` and `patterns` join `index` in the non-concept exclusions.** All three are Azure
+Architecture Center navigation pages of the same class — `addedFrom: related-edge`, no material,
+no `related` edges of their own. The earlier entry left them in because excluding them is a
+corpus admission call and admission is a human decision (CLAUDE.md hard constraint 7); the user
+made that call on 2026-08-22. Node count is 67 as a consequence of the rule, not as a target.
+
+**Shipped shape**, fetched from the running service after both changes: 67 nodes (18 grey), 103
+authored edges, 232 inferred, mean degree 10.0, inferred cut 0.4000, 0 isolated concepts, 0
+grey-to-grey and 0 grey-touching inferred edges, all 18 grey nodes still carrying at least one
+authored edge, 34,460 bytes. The highest-degree nodes are now `asynchronous-request-reply` 25,
+`choreography` 25, `throttling` 24, `bulkhead` 23, `sequential-convoy` 22 — all
+material-bearing.
+
+**This outlives the feature.** Whenever the corpus is expanded, newly admitted concepts arrive
+grey, and their vectors will be degenerate in exactly this way until material is attached. Any
+future use of concept vectors — clustering, gap ranking, recommendation — has to decide what to
+do about that, and "they embed by word shape, not by meaning" is the fact to start from.
+
+## 2026-08-22 — Measured: the calibration baselines do not separate, so there is no threshold and no tier 2
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (US3, FR-016 to FR-019b), measured against the real corpus
+**Record**: `docs/calibration/resolve-threshold.json`, regenerated by
+`scripts/calibrate-threshold.ts`
+
+**What was measured, and why this relation.** SCRUM-44 measured similarity between two
+*different* concepts joined by a `related` edge and used it as a positive baseline; the
+2026-08-11 correction above explains why the sign is inverted there. This run measures the
+relation resolution actually performs: **a phrase against a concept**. The matching baseline is
+147 phrases, three from each of the 49 concepts with material, drawn from that concept's own
+source material. The non-matching baseline is the same phrases scored against the strongest
+*different* concept — which is what resolution would do, since the best match wins.
+
+```
+                            n     min      p5     p50     p95     max    mean
+matching (own concept)     147  0.1126  0.1921  0.3254  0.5766  0.6616  0.3481
+non-matching (material)    147  0.2042  0.2606  0.3799  0.5092  0.8144  0.3825
+non-matching (grey)        147  0.1793  0.2252  0.3408  0.5214  0.6182  0.3524
+
+separation  p5(matching) - p95(non-matching) = -0.3171      NOT separated
+```
+
+**The distributions do not separate, and not marginally.** The *mean* non-matching score
+(0.3825) is **higher** than the mean matching score (0.3481): a sentence from a concept's own
+document is, on average, closer to some other concept than to its own. Stated the plainest way,
+the concept a phrase was taken from is the strongest match for **50 of 147 phrases (34%)**. For
+18 of the 49 concepts, not one of its three phrases identifies it; for only 4 do all three.
+
+Per FR-018 no threshold is emitted. `scripts/calibrate-threshold.ts` writes
+`src/resolve/calibration.ts` with `SIMILARITY_THRESHOLD = null`, and
+`tests/unit/resolve/resolve-tier2.test.ts` fails the moment a number appears there without a run
+behind it.
+
+**Consequence: T021 is not built.** Tier 2 needs a calibrated threshold and there is none.
+Resolution stays at tier 1 — an exact normalised lookup against `concept_terms` — and everything
+it misses stays `unresolved`. That is not a partial delivery of US3; it is US3's stated outcome
+for this case, and it is the one SCRUM-44's superseded entry is the precedent for. `unresolved`
+carries a null score rather than "the best score seen", because nothing was scored.
+
+**FR-019b, restated with the number in hand.** This is a floor and it was not cleared. Failure
+here means the representation is inadequate and no wording will help; success would not have
+established that real job-description wording reaches the right concept. The floor result makes
+the second-stage calibration (real posting phrasings) pointless to run against these vectors:
+there is nothing for it to improve on.
+
+**Two circularity exclusions, because there were two records, not one.** FR-017 names
+`concept_terms`. The less obvious one is the **preamble chunk**: a concept's vector is built from
+its name, its terms, and the opening 500 characters of its preamble
+(`scripts/ingest-corpus.ts`), so a phrase taken from there is scored against a vector partly
+built from that same text. Phrases come from non-preamble sections only, with every recorded name
+of the concept masked out. Masking is not extra strictness — tier 2 only ever sees phrases tier 1
+did *not* match, so a phrase spelling the concept's name is not a case tier 2 would handle.
+
+**A sampling bias found and fixed mid-run, recorded because the first number was wrong.** The
+first implementation took the first three eligible sentences per concept. Sections sort by
+`chunkId`, so that meant "Context and problem" for nearly every Azure pattern — the section
+written to state a *general* difficulty before the pattern is named. The sample was therefore 49
+generic problem statements, measuring a harder and different question. Phrases are now spread
+evenly across each concept's whole eligible pool. It moved the top-1 rate from 40/147 to 50/147
+and the verdict not at all.
+
+**Grey concepts, per FR-010.** They are reported apart from the material ones throughout and
+cannot move the threshold. The evidence for keeping them apart is direct: a grey concept
+out-scores the best material non-match for 47 of 147 phrases and out-scores the phrase's *own*
+concept for 82 of 147, and the top grey attractors are exactly the degenerate short generic nouns
+the 2026-08-22 entry above identified — `auto-scaling` 21, `understand-data-store-models` 19,
+`messaging` 15, `data-considerations` 15. A grey concept also has no matching baseline at all:
+with no material it has no own words, so `greyMatching` is null by construction rather than by
+omission.
+
+**What this does not say.** It does not say `text-embedding-3-small` is the wrong model, and it
+does not say the corpus is bad. It says these concept vectors — name + terms + 500 characters of
+preamble, one vector per concept, no chunk-level vectors — cannot tell an Azure architecture
+pattern's own prose from its neighbour's. The three candidate directions, none of them chosen
+here: chunk-level vectors so a phrase is matched against the passage that discusses it rather
+than against a whole-concept average; a larger embedding model, whose reconsideration trigger the
+2026-08-11 correction explicitly declined to fire on the wrong evidence and which now has the
+right evidence to weigh; or hand-authored aliases, which make tier 1 cover more and reduce what
+tier 2 is asked to do. Choosing among them is a separate feature with its own measurement, not a
+follow-up commit on this branch.
+
+**Reproducibility.** The run was executed twice against the same corpus and reported identical
+figures to four decimal places, which is SC-006 satisfied on real data — for a run that produces
+no number, but the same machinery will produce a reproducible one when the representation
+changes.
+
+## 2026-08-22 — The calibration is TypeScript, not `corpus/tools/calibrate_threshold.py`
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T017, T018)
+
+tasks.md places the calibration at `corpus/tools/calibrate_threshold.py`. Its inputs are the
+stored concept vectors and the stored chunks — both in Postgres — and
+`specs/005-corpus-ingest-foundation/research.md` §1 settled that no Python process in this
+repository connects to the database, precisely so that nobody has to re-litigate the
+Constitution-IV judgment call each time. Honouring the filename would have reopened it, or else
+required a JSONL export of 607 chunks and 67 vectors for a tool that reads them once.
+
+It lives at `scripts/calibrate-threshold.ts` with the measurement logic split into
+`src/calibrate/` as pure functions — vectors in, numbers out — so the two rules most likely to be
+satisfied in name only, FR-017's independence and FR-018's refusal to emit a number, are driven
+by unit tests rather than only by whatever the corpus happens to contain today. Tests are at
+`tests/unit/calibrate/`, not `corpus/tools/tests/`.
+
+## 2026-08-22 — `npm test` was silently emptying `doc_chunks` on every run
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T024), fixing a defect introduced in
+specs/006-corpus-structure-rebuild
+
+The corpus table emptied itself three times over two features with no apparent cause. A plain
+`scripts/ingest-corpus.ts` run persisted correctly, no migration was being replayed, and the
+integration tests looked like they cleaned up only their own fixtures. The cause is
+`tests/integration/ingest-corpus.test.ts`, "preserves total leaf byte coverage after a full
+ingest into the database".
+
+That test deliberately reads the **real** `corpus/_meta/chunks/azure.jsonl` — that is the point
+of it, proving the loader loses nothing on the way into Postgres. So its `testConceptIds` is not
+a fixture id but every one of the 49 real corpus concepts, and its `finally` block ran
+`docChunk.deleteMany({ where: { patternId: { in: testConceptIds } } })` — every chunk of every
+real concept. Concepts survived because their delete carries `addedFrom: 'test-fixture'`; the
+chunk delete had no equivalent guard, so the asymmetry left a database that looked half-intact
+and pointed at nothing in particular.
+
+Reproduced deliberately before fixing, because a green suite that destroys data is exactly the
+failure that hides: with the old teardown the suite reports `10 passed` and leaves `doc_chunks`
+at 0; with the fix it reports `10 passed` and leaves all 607 rows.
+
+**The rule this establishes.** A test's teardown may delete only what that test can prove it
+created. Deleting by a *selector* the test also shares with production data is not cleanup, it is
+a truncate with extra steps. Teardown now snapshots the chunk ids present before the ingest and
+removes only ids that were not there — on a populated database that is nothing at all, since
+`ingestChunks` is content-hash keyed and rewrites the same ids, and on an empty one it is all of
+them, which is equally "as found".
+
+The pattern generalises to the concept guard as well, which got this right by accident:
+`addedFrom: 'test-fixture'` is a provenance marker, and provenance is what makes "did this test
+create this row?" answerable. Where a table has no such marker, snapshot instead.
+
+## 2026-08-22 — SC-003 corrected from 12 KB to the measured 34 KB
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T024)
+
+SC-003 required the whole graph in one response "of roughly 12 KB, matching the measured size".
+No such measurement had been taken. The figure was estimated during planning against a payload
+that node ids and authored edges alone would produce — before `matchedItems`, `hasCorpus`,
+per-node relevance, and the 232 inferred edges that FR-013's density target requires all became
+part of the contract. The response as `contracts/http-api.md` specifies it measures **34,491
+bytes** for the 67-node, 335-edge graph, about 83 bytes per edge, all of it required to draw the
+map.
+
+The conclusion the number was supporting is untouched: one response, no pagination, no subgraph
+parameter, no lazy expansion. So the criterion is restated at the measured size rather than left
+standing as a success criterion the implementation knowingly fails. A repository that carries a
+criterion everyone has privately agreed to ignore is worse off than one that carries none — the
+next reader cannot tell which of the ten are real.
+
+Corrected in three places that all repeated the estimate: `spec.md` SC-003 (with the reason),
+`contracts/http-api.md`, and the doc comment on the graph endpoint. The integration test at
+`tests/integration/submit-to-graph.test.ts` already bounded the real size and explained the gap;
+it needed no change.
+
+## 2026-08-22 — `prisma migrate reset` was not run, and why that is acceptable here
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T024)
+
+T024 called for verification from a reset database. The Prisma CLI now refuses a destructive
+`migrate reset` when it detects it was invoked by an agent, and demands the user's own recorded
+words as consent. That refusal was respected rather than worked around.
+
+What T024 actually needed from the reset was that the migration chain applies to a schema nothing
+had hand-patched, and that the corpus rebuilds from source rather than from whatever happened to
+survive. Both were obtained without dropping the database: `prisma migrate status` reports 4
+migrations found and the schema up to date with no drift, and the corpus was rebuilt end to end
+from the raw sources — `chunk_azure.py` regenerating 607 chunk rows over 49 concept-eligible
+files, then `ingest-corpus.ts` replacing all 49 files' chunks and rebuilding all 147 terms.
+
+What was *not* re-proved is that the four migrations apply cleanly to an empty database in
+sequence. That is worth someone running once with consent before merge; it is the one claim in
+T024 that this verification does not support.
+
+## 2026-08-22 — Independent review of the resolution and calibration assertions (T025)
+
+**Status**: active
+**Source**: specs/007-jd-concept-graph (T025)
+
+The test-reviewer subagent was asked, against the spec and the final code only, whether five
+assertions actually check what they claim or merely look like they do. Three came back adequate,
+two weak. Recorded because the two weak ones are the kind of finding that a green suite hides.
+
+**Adequate, confirmed by evidence not by assertion.** FR-017's non-circularity is tested for
+*both* circular sources independently — `tests/unit/calibrate/phrase-sampling.test.ts` asserts a
+preamble-only chunk yields zero phrases, and separately that every recorded name is masked out —
+so a leak of either kind fails a test. FR-013's target-degree edge selection is pinned by a
+synthetic distribution where every pairwise similarity sits below 0.44, which a hardcoded-0.44
+implementation would turn into an empty graph; the test asserts the real one still reaches the
+requested degree. The grey-concept rule is asserted at both the unit and the contract level.
+
+**Weak, and fixed: nothing tied the threshold in force back to a run.** Every test asserting "no
+threshold" read `SIMILARITY_THRESHOLD` from the generated `src/resolve/calibration.ts` directly.
+Hand-editing that file to `0.35` and flipping `separated` to `true` would have left the suite
+green — producing exactly the number-with-no-run-behind-it that FR-016 forbids and that the
+2026-08-11 correction is the precedent for. The refusal *mechanism* was well tested; the
+*artifact* was not tied to it.
+
+`calibrationModule()` moved out of `scripts/calibrate-threshold.ts` into
+`src/calibrate/calibration-module.ts` (the script's `void main()` would otherwise run on import),
+and `tests/unit/calibrate/calibration-module.test.ts` now re-renders the module from the
+committed record and compares it byte for byte, with a second case proving the generator does not
+simply always write null. Verified by deliberately editing the threshold to 0.35 and watching the
+test fail. This does not prove the record itself is honest — re-deriving it needs the database
+and 147 embedding calls, which a unit test must not make — but it raises the cost of a fabricated
+threshold from editing one literal to forging a 147-row record of per-phrase scores, and makes
+any drift between the two files a failure.
+
+**Weak, and deliberately not fixed: FR-008 cannot be tested until tier 2 exists.** No test proves
+a future tier 2 would reject a below-threshold nearest match rather than fall back to it, because
+no code computes a score to compare. Writing one now would mean building the tier the measurement
+says must not be built. The requirement is recorded at the top of
+`tests/unit/resolve/resolve-tier2.test.ts` as the first test to write when a calibration ever
+produces a number — nearest-match fallback being the single most likely way tier 2 gets built
+wrong, since it is what every vector-search example does by default and it looks like it works.

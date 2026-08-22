@@ -1,7 +1,21 @@
+"""Graph topology tests.
+
+    before   START -> extract_jd_structure -> (sufficient?) -> generate_candidate_directions
+                                                            -> reject_input
+    after    START -> extract_items -> END
+
+The conditional edge and both downstream nodes are gone. The point of asserting on the
+compiled topology rather than only on an invoke() result is that FR-022 forbids the
+sufficiency gate coming back in another form -- a conditional edge reappearing here is
+exactly what that would look like.
+"""
+
 from langchain_core.runnables import RunnableLambda
 
 from agent_service.graph import _wire_graph
-from agent_service.schemas import DirectionsLLMOutput, ExtractionLLMOutput
+from agent_service.schemas import ExtractedItemLLM, ItemsLLMOutput
+
+JD_TEXT = "Responsibilities include tuning a message broker."
 
 
 def _fake_model(parsed):
@@ -11,44 +25,43 @@ def _fake_model(parsed):
     return RunnableLambda(_invoke)
 
 
-def test_sufficient_routes_to_generate_directions():
-    extract_parsed = ExtractionLLMOutput(
-        sufficient=True,
-        role="Backend Engineer",
-        tech_stack=["Node.js"],
-        seniority="Senior",
-        seniority_inferred=False,
+def _items_parsed() -> ItemsLLMOutput:
+    return ItemsLLMOutput(
+        items=[ExtractedItemLLM(surface="message broker", evidence=["tuning a message broker"])]
     )
-    directions_invoked = {"called": False}
-
-    def _directions_invoke(_inputs):
-        directions_invoked["called"] = True
-        return {"raw": None, "parsed": DirectionsLLMOutput(directions=[]), "parsing_error": None}
-
-    graph = _wire_graph(_fake_model(extract_parsed), RunnableLambda(_directions_invoke))
-
-    result = graph.invoke({"jd_text": "Senior Backend Engineer, Node.js"})
-
-    assert directions_invoked["called"] is True
-    assert result["sufficient"] is True
 
 
-def test_insufficient_routes_to_reject_and_never_invokes_directions_model():
-    # FR-004: insufficient input must be rejected without attempting to generate
-    # candidate directions - assert the directions model is never even called, not just
-    # that the final result looks right (catches wiring bugs like the wrong branch being
-    # reachable, not just a routing function that happens to return the right string).
-    extract_parsed = ExtractionLLMOutput(sufficient=False, insufficient_reason="too short")
-    directions_invoked = {"called": False}
+def test_graph_has_exactly_one_node_between_start_and_end():
+    graph = _wire_graph(_fake_model(_items_parsed()))
 
-    def _directions_invoke(_inputs):
-        directions_invoked["called"] = True
-        return {"raw": None, "parsed": DirectionsLLMOutput(directions=[]), "parsing_error": None}
+    drawn = graph.get_graph()
+    node_names = {name for name in drawn.nodes if not name.startswith("__")}
 
-    graph = _wire_graph(_fake_model(extract_parsed), RunnableLambda(_directions_invoke))
+    assert node_names == {"extract_items"}
 
-    result = graph.invoke({"jd_text": "hi"})
 
-    assert directions_invoked["called"] is False
-    assert result["sufficient"] is False
-    assert result["directions"] == []
+def test_graph_has_no_conditional_edge_and_no_reject_path():
+    graph = _wire_graph(_fake_model(_items_parsed()))
+
+    drawn = graph.get_graph()
+
+    assert not any(edge.conditional for edge in drawn.edges)
+    assert all("reject" not in name for name in drawn.nodes)
+
+
+def test_graph_returns_items_in_state():
+    graph = _wire_graph(_fake_model(_items_parsed()))
+
+    result = graph.invoke({"jd_text": JD_TEXT})
+
+    assert [item.surface for item in result["items"]] == ["message broker"]
+
+
+def test_graph_returns_an_empty_item_list_without_rejecting_the_submission():
+    # FR-004: a posting with no technical content still runs the whole graph and comes
+    # back with an empty list. There is no branch that can refuse it.
+    graph = _wire_graph(_fake_model(ItemsLLMOutput(items=[])))
+
+    result = graph.invoke({"jd_text": "We are a friendly team looking for a great person."})
+
+    assert result["items"] == []

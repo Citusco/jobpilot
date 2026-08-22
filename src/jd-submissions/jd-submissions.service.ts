@@ -1,88 +1,115 @@
 import { Injectable } from '@nestjs/common';
 
 import { AgentOrchestrationClient } from '../agent-orchestration/agent-orchestration.client.js';
+import type { ExtractedItem } from '../agent-orchestration/schemas/extract-response.schema.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { normalizeTerm } from '../corpus/normalize-term.js';
+import { ResolveService, type ResolutionTier } from '../resolve/resolve.service.js';
 
-export interface JdSubmissionAcceptedResult {
-  status: 'accepted';
-  id: string;
-  extraction: {
-    role: string;
-    techStack: string[];
-    seniority: string;
-    seniorityInferred: boolean;
-  };
-  directions: Array<{
-    id: string;
-    name: string;
-    rationale: string;
-    tags: string[];
-    suggestedQuestionCount: number;
-  }>;
-  createdAt: Date;
+export interface SubmittedItem {
+  surface: string;
+  conceptId: string | null;
+  tier: ResolutionTier;
+  score: number | null;
+  evidence: string[];
 }
 
-export interface JdSubmissionRejectedResult {
-  status: 'rejected';
-  reason: string;
+export interface JdSubmissionSummary {
+  total: number;
+  exact: number;
+  similarity: number;
+  unresolved: number;
 }
 
-export type JdSubmissionResult = JdSubmissionAcceptedResult | JdSubmissionRejectedResult;
+export interface JdSubmissionResult {
+  submissionId: string;
+  items: SubmittedItem[];
+  summary: JdSubmissionSummary;
+}
 
 @Injectable()
 export class JdSubmissionsService {
   constructor(
     private readonly agentClient: AgentOrchestrationClient,
+    private readonly resolveService: ResolveService,
     private readonly prisma: PrismaService,
   ) {}
 
   async submit(text: string): Promise<JdSubmissionResult> {
-    const result = await this.agentClient.extract(text);
+    // Extraction failure propagates and fails the request. A submission stored with an
+    // empty item list on error would be indistinguishable from a posting that genuinely
+    // had no technical content (contracts/http-api.md).
+    const { items } = await this.agentClient.extract(text);
 
-    if (!result.sufficient) {
-      await this.prisma.jdSubmission.create({
-        data: { rawText: text, status: 'rejected', rejectionReason: result.reason },
-      });
-      return { status: 'rejected', reason: result.reason };
-    }
+    const merged = mergeByNormalizedPhrase(items);
+    const resolutions = await this.resolveService.resolve(merged.map((item) => item.surface));
+
+    const rows = resolutions.map((resolution, index) => ({
+      surface: resolution.surface,
+      normalized: resolution.normalized,
+      evidence: merged[index].evidence,
+      conceptId: resolution.conceptId,
+      tier: resolution.tier,
+      score: resolution.score,
+    }));
 
     const submission = await this.prisma.jdSubmission.create({
-      data: {
-        rawText: text,
-        status: 'accepted',
-        role: result.extraction.role,
-        techStack: result.extraction.techStack,
-        seniority: result.extraction.seniority,
-        seniorityInferred: result.extraction.seniorityInferred,
-        candidateTrainingDirections: {
-          create: result.directions.map((direction) => ({
-            name: direction.name,
-            rationale: direction.rationale,
-            tags: direction.tags,
-            suggestedQuestionCount: direction.suggestedQuestionCount,
-          })),
-        },
-      },
-      include: { candidateTrainingDirections: true },
+      data: { rawText: text, items: { create: rows } },
     });
 
+    const responseItems: SubmittedItem[] = rows.map((row) => ({
+      surface: row.surface,
+      conceptId: row.conceptId,
+      tier: row.tier,
+      score: row.score,
+      evidence: row.evidence,
+    }));
+
     return {
-      status: 'accepted',
-      id: submission.id,
-      extraction: {
-        role: submission.role ?? '',
-        techStack: submission.techStack,
-        seniority: submission.seniority ?? '',
-        seniorityInferred: submission.seniorityInferred,
-      },
-      directions: submission.candidateTrainingDirections.map((direction) => ({
-        id: direction.id,
-        name: direction.name,
-        rationale: direction.rationale,
-        tags: direction.tags,
-        suggestedQuestionCount: direction.suggestedQuestionCount,
-      })),
-      createdAt: submission.createdAt,
+      submissionId: submission.id,
+      items: responseItems,
+      summary: summarize(responseItems),
     };
   }
+}
+
+/**
+ * FR-003: repeated mentions of the same phrase are one item retaining every occurrence
+ * as evidence.
+ *
+ * Merging happens here rather than being left to the database because
+ * `@@unique([submissionId, normalized])` would reject the second row outright, losing the
+ * evidence with it. The constraint is the backstop, not the mechanism.
+ *
+ * Identity is the normalised phrase, so "Kubernetes" and "kubernetes" are one item -- the
+ * same equivalence tier 1 resolves by. The first surface form seen wins, since one of the
+ * two spellings has to be the one displayed and the posting's first use is as good a
+ * choice as any. Duplicate evidence spans are dropped; distinct ones accumulate in the
+ * order they were reported.
+ */
+function mergeByNormalizedPhrase(items: ExtractedItem[]): ExtractedItem[] {
+  const byNormalized = new Map<string, { surface: string; evidence: string[] }>();
+
+  for (const item of items) {
+    const key = normalizeTerm(item.surface);
+    const existing = byNormalized.get(key);
+    if (!existing) {
+      byNormalized.set(key, { surface: item.surface, evidence: [...new Set(item.evidence)] });
+      continue;
+    }
+    for (const span of item.evidence) {
+      if (!existing.evidence.includes(span)) existing.evidence.push(span);
+    }
+  }
+
+  return [...byNormalized.values()];
+}
+
+function summarize(items: SubmittedItem[]): JdSubmissionSummary {
+  return {
+    total: items.length,
+    exact: items.filter((item) => item.tier === 'exact').length,
+    similarity: items.filter((item) => item.tier === 'similarity').length,
+    unresolved: items.filter((item) => item.tier === 'unresolved').length,
+  };
 }
