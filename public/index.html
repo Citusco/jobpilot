@@ -166,7 +166,8 @@
         position: absolute;
         left: 12px;
         right: 12px;
-        bottom: 12px;
+        top: 12px;
+        margin-top: 46px;
         background: rgba(255, 93, 115, 0.1);
         border: 1px solid rgba(255, 93, 115, 0.45);
         border-radius: 8px;
@@ -175,10 +176,13 @@
         color: #ffc4cc;
       }
 
+      /* Bottom right rather than top right: the control bar wraps on a narrow stage, and
+         two absolutely positioned boxes at the same corner of the same edge overlap the
+         moment it does. */
       #legend {
         position: absolute;
         right: 12px;
-        top: 12px;
+        bottom: 12px;
         background: rgba(22, 27, 37, 0.9);
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -564,7 +568,7 @@
           index,
           springs,
           alpha: 1,
-          fitted: false,
+          framed: false,
           view: { x: 0, y: 0, scale: 1 },
         };
       }
@@ -633,14 +637,11 @@
         }
 
         sim.alpha = Math.max(sim.alpha * 0.994, 0.02);
-        // Once the layout has stopped moving much, frame it. Without this the graph
-        // settles into whatever absolute size the force constants happen to produce and
-        // sits as a small knot in the middle of a large canvas -- which it did, using
-        // about a third of the width.
-        if (!sim.fitted && sim.alpha < 0.08) {
-          sim.fitted = true;
-          fitView();
-        }
+        // Frame the graph on every frame until the viewer takes over. Fitting once at
+        // alpha 0.08 was enough while every node had a spring holding it in; the
+        // unanswered layer has none by design, so those points keep drifting outwards
+        // under repulsion alone and the bottom third of the map left the canvas.
+        if (!sim.framed) fitView();
       }
 
       /** Scale and centre the view so the whole graph fills the canvas with a margin. */
@@ -681,7 +682,7 @@
       el('reheat').addEventListener('click', () => {
         if (sim === null) return;
         sim.alpha = 1;
-        sim.fitted = false;
+        sim.framed = false;
       });
       for (const id of ['showAuthored', 'showInferred', 'showAllLabels']) {
         el(id).addEventListener('change', () => draw());
@@ -931,6 +932,8 @@
           return;
         }
         if (panning !== null) {
+          // The viewer has taken over the framing; stop re-fitting under them.
+          sim.framed = true;
           sim.view.x = panning.ox + (event.clientX - panning.x) / sim.view.scale;
           sim.view.y = panning.oy + (event.clientY - panning.y) / sim.view.scale;
           return;
@@ -953,6 +956,7 @@
       canvas.addEventListener('wheel', (event) => {
         event.preventDefault();
         const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+        sim.framed = true;
         sim.view.scale = Math.min(4, Math.max(0.3, sim.view.scale * factor));
         draw();
       }, { passive: false });

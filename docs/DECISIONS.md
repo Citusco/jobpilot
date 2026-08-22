@@ -1844,3 +1844,98 @@ sequencing it before further depth on what feeds it, unless the depth is a prere
 than an improvement. The corpus layer genuinely was a prerequisite — there was nothing to render
 before SCRUM-44. Corpus *expansion* is an improvement, and it should have waited, as it now has.
 **Status**: active
+
+## 2026-08-22 — Implementation decisions settled while building the JD-shaped graph (feature 010)
+
+The brief settled the big ones: the node set becomes the posting's in three layers, tier 1
+gains a containment pass, and the containment tier must be traceable in the stored row.
+These are the calls it did not make, and the two measurements that changed the design after
+the map was rendered.
+
+**The containment tier is stored as `exact` and derived back, rather than adding a fourth
+enum value.** `ResolutionTier` is a Postgres enum and adding a value is a schema change,
+which Principle III routes through the full SDD flow — disproportionate for a matching
+rule. A separate marker column is the same objection: Principle III names "new tables,
+columns, or relationships" explicitly.
+
+What carries the distinction instead is an invariant already in the row. `normalized` is a
+registered `concept_terms.term` **if and only if** exact equality produced the match: a
+phrase equal to a term is answered by the exact lookup and never reaches the containment
+pass, and `matchByContainment` explicitly declines a phrase equal to the term it matched,
+so the two paths cannot both produce the same row. `apiTierForRow` is that derivation, it
+is unit-tested as an invariant rather than an observation, and the API reports four tiers
+over a three-valued column.
+
+This is the same derive-rather-than-materialise choice the graph already makes for its
+edges (data-model.md, "Derived, not stored"), and it is not free. Admitting a new alias
+later — say `retry patterns` as an alias of `retry` — retroactively relabels an old
+containment row as exact. That is rare (corpus admission is a human act, hard constraint
+7), it only ever moves a row toward the stronger claim, and it is the price of not putting
+a migration behind an afternoon's work. If a third matching pass ever appears, the
+derivation stops being decidable and the enum value has to be paid for properly.
+
+**Containment matches on a whitespace-preserving form, not on `normalizeTerm`'s.**
+`normalizeTerm` strips every non-alphanumeric, which is right for exact lookup — it unifies
+`anti-corruption-layer` with `anticorruption layer` — and disastrous for containment, where
+`api` then sits inside `rapid` and `index` inside `indexing`. The containment pass therefore
+has its own `loosePhrase`, which collapses runs of non-alphanumerics to a single space, and
+matches on word sequences. This is a second normalisation in a codebase whose 2026-08-10
+entry says there must be exactly one — the reconciliation is that they answer different
+questions and only `normalizeTerm` ever writes to or reads the term primary key.
+
+**Three guards, and all of them err toward unresolved.** A containment hit writes a concept
+id into a row that nothing downstream can overrule, so the pass declines wherever the answer
+is arguable: a four-character minimum (no real term is shorter today, but a future `api` or
+`k8s` alias is a fragment and says little about the phrase containing it); longest match
+wins **only if** every other match nests inside it, so `sidecar and bulkhead` and
+`throttling and rate limiting` stay unresolved rather than picking one of two things the
+phrase names; and the corpus's navigation pages are excluded, which is load-bearing rather
+than tidy — `patterns` is a registered term and is longer than `retry`, so without it
+`retry patterns` resolves to an Azure table of contents. `NON_CONCEPT_IDS` was previously
+applied only where the graph is derived; this is the second place that needs it.
+
+Measured against the real corpus, all eight phrases the exact tier missed on a real posting
+now resolve, and none of Go, Kafka, GraphQL or `Kubernetes operators` acquires a concept.
+
+**Found by rendering it: the adjacent layer was two thirds of the map.** The first real
+submission after the layers were built came back 9 named-resolved, 25 named-unanswered and
+**43 adjacent** out of 67 concepts. Uncapped "one hop" is not a small set when the graph is
+deliberately built to a mean degree of ten — the layer that exists to be subordinate to the
+other two was larger than both together, which is precisely the failure the brief named in
+advance. Each named concept now contributes its three strongest neighbours, authored first
+because a document author asserted them, then inferred by descending similarity. Same
+submission after: 9 / 25 / 19. Three is a product judgement, not a measurement, so it is a
+named constant (`ADJACENT_PER_NAMED`) with the numbers behind it in the comment.
+
+This is the 2026-08-22 "build the visible thing earlier" entry paying out again, within an
+hour of the same map being rendered a second time.
+
+**Edges are kept only where one end is something the posting named.** An edge between two
+adjacent concepts is two hops from the submission. Keeping them was what made the
+subordinate layer the densest region of the picture, and dropping them costs nothing a
+reader can act on.
+
+**The graph carries the posting's items now, which retires a caveat rather than adding a
+field.** The 2026-08-22 client entry recorded that `?submission=<id>` on a cold browser
+could not show the gap list, because the unresolved items lived only in the `POST`
+response. The map is the posting's now, so the posting travels with it: `items` on the
+graph response, and the client no longer has a "not available" state to explain.
+
+**The corpus is not lost, and the count is what keeps it visible.** The whole edge set is
+still assembled over all 67 concepts before the posting selects from it, so the density
+target and the inferred cut stay properties of the corpus rather than of one submission.
+What the map does not draw is reported as `corpusConcepts` against `offMap` — 67 against 37
+on the measured posting. The brief asked whether the adjacent layer alone makes the corpus
+legible: it does not, and it should not have to. Adjacency answers "what else is near what
+you asked for"; it says nothing about size, and after the cap it says even less.
+
+**Found while fixing the 502: whitespace was only part of it.** Comparing evidence on
+collapsed whitespace while storing the posting's own text is a narrow, correct fix and it is
+in. It did not take the failure rate to zero. What remains on the measured posting is the
+model returning a span with the *words reordered* across a line break — `services, with
+PostgreSQL and Redis behind most` for a posting that reads `with PostgreSQL and Redis behind
+most\nservices,`. That is a fabricated span, not a rewrapped one, and the guard is right to
+refuse it. Accepting it would need either a fuzzy match, which breaks hard constraint 1, or
+a retry, which is a real design question about where retries live — neither is a narrow fix,
+so neither was taken.
+**Status**: active
