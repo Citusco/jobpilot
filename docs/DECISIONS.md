@@ -1806,3 +1806,41 @@ aggregation' is not a substring of the submitted text`. The model returns an evi
 whitespace normalised, most readily where the posting hard-wraps a line, and the verbatim guard
 correctly refuses it. The guard is right; the retry story around it is missing. Not fixed here —
 it is an agent-service concern, and a client that silently retried would hide it.
+
+## 2026-08-22 — Build the visible thing earlier; it tells you what the invisible thing should be
+
+**Decision**: refine how the 2026-08-08 priority rule is applied. That entry says to prefer the
+branch with more AI-engineering substance at a fork, and it stands. It does not say to build the
+whole backend before anything is visible, and it was being read that way.
+
+**The evidence is this project's own history.** SCRUM-42, 44 and 45 delivered the corpus layer
+and the resolution pipeline over several days, all of it invisible. SCRUM-47 put a client in
+front of it in a single agent run, and within an hour of looking at the result four things
+surfaced that no amount of terminal measurement had produced:
+
+* The layers are inverted. The map is the corpus with the posting relegated to a side panel, so
+  a posting naming Go, GraphQL and Kafka shows none of them, and every uncovered posting produces
+  an identical map carrying no information about the submission.
+* 28% of a posting's unresolved items literally contain a registered concept name —
+  `ambassador patterns`, `retry patterns`, `event-driven flows`. Tier 1 does exact equality, so it
+  misses all of them. A containment pass is an afternoon of work and no corpus change.
+* The unresolved list is dominated by product names — Go, Kafka, Kubernetes, PostgreSQL — which
+  under this project's own alias rule should never become concepts. That reframes what
+  "the corpus does not cover this role" actually means.
+* Node granularity is wrong: a posting's surface vocabulary is languages, frameworks, tools and
+  paradigms, while the map shows architecture patterns.
+
+Feature 008, corpus expansion, had a complete specification and was parked the same day, because
+seeing the map changed which problem was worth solving.
+
+**Why this is not a contradiction.** The priority rule governs *which branch to take at a fork*,
+not *what order to build in*. Choosing verifiable retrieval over a prettier product is still
+right. Deferring every visible surface until the invisible layers are finished is a different
+claim, and the measurement above says it costs more than it saves — the visible artifact is an
+instrument, not a reward for finishing the backend.
+
+**What changes in practice**: when a feature would produce something a person can look at, prefer
+sequencing it before further depth on what feeds it, unless the depth is a prerequisite rather
+than an improvement. The corpus layer genuinely was a prerequisite — there was nothing to render
+before SCRUM-44. Corpus *expansion* is an improvement, and it should have waited, as it now has.
+**Status**: active
