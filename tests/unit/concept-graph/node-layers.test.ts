@@ -1,4 +1,7 @@
-import { layerForPosting } from '../../../src/concept-graph/node-layers.js';
+import {
+  ADJACENT_PER_NAMED,
+  layerForPosting,
+} from '../../../src/concept-graph/node-layers.js';
 import type { GraphEdge } from '../../../src/concept-graph/edge-assembly.js';
 
 /**
@@ -115,6 +118,57 @@ describe('layerForPosting: edges', () => {
     expect(result.edges).toEqual([
       { a: 'circuit-breaker', b: 'retry', kind: 'authored', strength: 1 },
       { a: 'circuit-breaker', b: 'bulkhead', kind: 'inferred', strength: 0.51 },
+    ]);
+  });
+
+  it('caps how many neighbours each named concept contributes', () => {
+    // Uncapped, one hop is most of the corpus: the graph is built to a mean degree of
+    // ten, and a real posting naming nine concepts pulled in 43 of the 67. Two thirds of
+    // the map was then the layer that is meant to be subordinate to the other two.
+    const hub = { conceptId: 'hub', name: 'Hub', hasCorpus: true };
+    const spokes = Array.from({ length: 8 }, (_, i) => ({
+      conceptId: `spoke-${i}`,
+      name: `Spoke ${i}`,
+      hasCorpus: true,
+    }));
+    const spokeEdges: GraphEdge[] = spokes.map((spoke, i) => ({
+      a: 'hub',
+      b: spoke.conceptId,
+      kind: 'inferred',
+      strength: 0.3 + i / 100,
+    }));
+
+    const result = layerForPosting([item('Hub', 'hub')], [hub, ...spokes], spokeEdges);
+
+    expect(result.counts.adjacent).toBe(ADJACENT_PER_NAMED);
+    // The strongest survive, and an authored link beats any inferred one.
+    expect(result.nodes.filter((n) => n.layer === 'adjacent').map((n) => n.id)).toEqual([
+      'spoke-5',
+      'spoke-6',
+      'spoke-7',
+    ]);
+  });
+
+  it('prefers an authored neighbour over a stronger inferred one when capping', () => {
+    const hub = { conceptId: 'hub', name: 'Hub', hasCorpus: true };
+    const others = ['a', 'b', 'c', 'd'].map((id) => ({
+      conceptId: id,
+      name: id.toUpperCase(),
+      hasCorpus: true,
+    }));
+    const mixed: GraphEdge[] = [
+      { a: 'hub', b: 'd', kind: 'authored', strength: 1 },
+      { a: 'hub', b: 'a', kind: 'inferred', strength: 0.9 },
+      { a: 'hub', b: 'b', kind: 'inferred', strength: 0.8 },
+      { a: 'hub', b: 'c', kind: 'inferred', strength: 0.7 },
+    ];
+
+    const result = layerForPosting([item('Hub', 'hub')], [hub, ...others], mixed);
+
+    expect(result.nodes.filter((n) => n.layer === 'adjacent').map((n) => n.id).sort()).toEqual([
+      'a',
+      'b',
+      'd',
     ]);
   });
 

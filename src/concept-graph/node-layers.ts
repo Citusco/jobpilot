@@ -17,6 +17,22 @@ import type { GraphEdge } from './edge-assembly.js';
 
 export type NodeLayer = 'named-resolved' | 'named-unanswered' | 'adjacent';
 
+/**
+ * How many neighbours each named concept contributes to the adjacent layer.
+ *
+ * Uncapped "one hop" is not a small set. The corpus is built to a mean degree of ten, so
+ * a posting naming nine concepts reached 43 of the 67 -- measured on a real submission,
+ * against 9 named-resolved and 25 named-unanswered. Two thirds of the map was then the
+ * layer that is supposed to be subordinate to the other two, which is the failure the
+ * brief for this change named in advance.
+ *
+ * Three is a product judgement, not a measurement, and it is written as a constant so it
+ * can be moved when someone looks at the map and disagrees. What is *not* a judgement is
+ * the ordering the cap applies: authored links first, because a document author asserted
+ * them, then inferred by descending similarity.
+ */
+export const ADJACENT_PER_NAMED = 3;
+
 /** One stored `extracted_items` row, reduced to what node selection needs. */
 export interface PostingItem {
   surface: string;
@@ -97,15 +113,28 @@ export function layerForPosting(
   }
 
   // One hop, from anything the posting named -- including a named concept with no
-  // material, whose authored edges were written by a document author and are real.
-  const adjacent = new Set<string>();
+  // material, whose authored edges were written by a document author and are real. Each
+  // named concept contributes its strongest few and no more; see ADJACENT_PER_NAMED.
+  const candidates = new Map<string, { other: string; kind: string; strength: number }[]>();
   for (const edge of edges) {
-    if (namedConcepts.has(edge.a) && !namedConcepts.has(edge.b) && byConceptId.has(edge.b)) {
-      adjacent.add(edge.b);
-    }
-    if (namedConcepts.has(edge.b) && !namedConcepts.has(edge.a) && byConceptId.has(edge.a)) {
-      adjacent.add(edge.a);
-    }
+    const consider = (from: string, to: string) => {
+      if (!namedConcepts.has(from) || namedConcepts.has(to) || !byConceptId.has(to)) return;
+      if (!candidates.has(from)) candidates.set(from, []);
+      candidates.get(from)!.push({ other: to, kind: edge.kind, strength: edge.strength });
+    };
+    consider(edge.a, edge.b);
+    consider(edge.b, edge.a);
+  }
+
+  const adjacent = new Set<string>();
+  // Named concepts in a fixed order, so which neighbours survive the cap does not depend
+  // on the order the posting happened to mention things in (FR-015).
+  for (const conceptId of [...namedConcepts.keys()].sort()) {
+    const ranked = (candidates.get(conceptId) ?? []).sort((x, y) => {
+      if (x.kind !== y.kind) return x.kind === 'authored' ? -1 : 1;
+      return y.strength - x.strength || x.other.localeCompare(y.other);
+    });
+    for (const entry of ranked.slice(0, ADJACENT_PER_NAMED)) adjacent.add(entry.other);
   }
 
   const conceptNodes: GraphNode[] = [];
